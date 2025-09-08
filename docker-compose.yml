@@ -1,0 +1,12 @@
+version: '3'
+
+services:
+  meeting-bot:
+    build: .
+    container_name: meeting-bot
+    volumes:
+      - ./outputs:/app/outputs
+    env_file:
+      - .env
+    # Default command runs in local mode
+    # Override with: docker-compose run meeting-bot --source s3 --s3-key transcript.txt

@@ -1,0 +1,7 @@
+Attendees: Alex, Priya, Jordan
+Agenda: onboarding flow, pricing update, Q3 launch
+Discussion:
+- We agreed to simplify the signup from 5 steps to 3.
+- Pricing change: Starter $19, Pro $49. Priya to update website copy.
+- Q3 launch date holds: Sept 15. Jordan owns risk register.
+- Security gap: missing 2FA on admin dashboard. Alex to file a ticket; due next Friday.
