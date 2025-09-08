@@ -48,6 +48,10 @@ credentials.csv
 
 # S3 demo outputs
 meeting-bot-outputs/
+
+# Local output files
+outputs/minutes.md
+outputs/actions.json
 meeting-bot-transcripts/
 
 # Docker
