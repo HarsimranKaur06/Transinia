@@ -1,3 +1,21 @@
+"""
+APPLICATION CONFIGURATION MANAGER
+-------------------------------
+This file manages all external configuration for the application.
+It provides:
+
+1. Loading of environment variables from .env file
+2. Configuration of the logging system with appropriate formatting
+3. A central Settings class that contains:
+   - OpenAI API credentials for AI services
+   - AWS access credentials for S3 storage
+   - S3 bucket names for raw transcripts and processed outputs
+   - Other configurable application parameters
+
+This centralized configuration makes the application more maintainable
+and allows for configuration changes without code modifications.
+"""
+
 import logging
 import os
 from dataclasses import dataclass

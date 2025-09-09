@@ -1,3 +1,19 @@
+"""
+WORKFLOW DEFINITION AND ORCHESTRATION
+-----------------------------------
+This file configures the LangGraph workflow that organizes the analysis steps.
+Specifically, it:
+
+1. Creates a directed graph of processing steps
+2. Defines the exact sequence of operations
+3. Connects the nodes in the correct order
+4. Sets up checkpointing for reliability
+5. Compiles the graph into an executable application
+
+The build_app() function returns a compiled workflow that can process
+meeting transcripts through the complete analysis pipeline in the right order.
+"""
+
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 from src.models.schemas import MeetingState
