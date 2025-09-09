@@ -50,6 +50,7 @@ credentials.csv
 meeting-bot-outputs/
 
 # Local output files
+outputs/
 outputs/minutes.md
 outputs/actions.json
 meeting-bot-transcripts/
@@ -62,15 +63,9 @@ docker-compose.override.yml
 .terraform/
 **/.terraform/
 *.tfstate
-*.tfstate.backup
+*.tfstate.*
 *.tfvars
+!terraform.tfvars.example
 **/*.exe
-**/terraform-provider-aws*
-
-# Terraform
-.terraform/
+**/terraform-provider-*
 .terraform.lock.hcl
-*.tfstate
-*.tfstate.backup
-terraform.tfvars
-**/terraform-provider-*.exe
