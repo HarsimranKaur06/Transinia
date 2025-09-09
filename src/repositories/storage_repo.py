@@ -218,3 +218,46 @@ class StorageRepository:
         except Exception as e:
             logger.error(f"Failed to mark task as completed: {str(e)}")
             return False
+    
+    # Additional methods for API integration
+    def save_file_to_s3(self, key: str, content: bytes) -> bool:
+        """Save a file to S3."""
+        if not self.s3_service:
+            logger.warning("S3 service not available. Cannot save file to S3.")
+            return False
+        
+        try:
+            result = self.s3_service.save_file(key, content)
+            if result:
+                logger.info(f"Saved file to S3: {key}")
+            return result
+        except Exception as e:
+            logger.error(f"Failed to save file to S3: {str(e)}")
+            return False
+    
+    def get_file_from_s3(self, key: str) -> str:
+        """Get a file from S3."""
+        if not self.s3_service:
+            logger.warning("S3 service not available. Cannot get file from S3.")
+            return ""
+        
+        try:
+            content = self.s3_service.get_file(key)
+            if content:
+                logger.info(f"Retrieved file from S3: {key}")
+            return content
+        except Exception as e:
+            logger.error(f"Failed to get file from S3: {str(e)}")
+            return ""
+    
+    def get_s3_object_metadata(self, key: str) -> Dict:
+        """Get metadata for an S3 object."""
+        if not self.s3_service:
+            logger.warning("S3 service not available. Cannot get S3 object metadata.")
+            return {}
+        
+        try:
+            return self.s3_service.get_object_metadata(key)
+        except Exception as e:
+            logger.error(f"Failed to get S3 object metadata: {str(e)}")
+            return {}

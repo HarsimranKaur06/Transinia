@@ -78,3 +78,46 @@ class S3Service:
         except ClientError as e:
             logger.error(f"Error saving actions to bucket {self.bucket_processed}: {e}")
             return False
+    
+    def save_file(self, key, content):
+        """Save arbitrary file content to S3"""
+        try:
+            self.s3_client.put_object(
+                Bucket=self.bucket_raw,
+                Key=key,
+                Body=content
+            )
+            return True
+        except ClientError as e:
+            logger.error(f"Error saving file to bucket {self.bucket_raw}: {e}")
+            return False
+    
+    def get_file(self, key):
+        """Get the content of any file from S3"""
+        try:
+            # First try the processed bucket
+            try:
+                response = self.s3_client.get_object(Bucket=self.bucket_processed, Key=key)
+                return response['Body'].read().decode('utf-8')
+            except ClientError:
+                # If not found, try the raw bucket
+                response = self.s3_client.get_object(Bucket=self.bucket_raw, Key=key)
+                return response['Body'].read().decode('utf-8')
+        except ClientError as e:
+            logger.error(f"Error getting file {key}: {e}")
+            return None
+    
+    def get_object_metadata(self, key):
+        """Get metadata for an S3 object"""
+        try:
+            # First try the raw bucket
+            try:
+                response = self.s3_client.head_object(Bucket=self.bucket_raw, Key=key)
+                return response
+            except ClientError:
+                # If not found, try the processed bucket
+                response = self.s3_client.head_object(Bucket=self.bucket_processed, Key=key)
+                return response
+        except ClientError as e:
+            logger.error(f"Error getting metadata for {key}: {e}")
+            return None
