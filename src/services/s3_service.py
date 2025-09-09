@@ -1,3 +1,21 @@
+"""
+AWS S3 CLOUD STORAGE SERVICE
+---------------------------
+This file provides direct integration with Amazon S3 cloud storage.
+It implements:
+
+1. Secure connection to AWS using credentials from settings
+2. Methods to list available transcripts in the source bucket
+3. Functions to retrieve transcript text from S3
+4. Methods to save meeting minutes to the destination bucket
+5. Functions to save action items JSON to the destination bucket
+6. Error handling for all S3 operations
+
+This service handles all the low-level details of S3 interactions,
+allowing the rest of the application to work with cloud storage without
+needing to know AWS-specific implementation details.
+"""
+
 import boto3
 from botocore.exceptions import ClientError
 from src.config.settings import settings, logger

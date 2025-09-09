@@ -1,3 +1,20 @@
+"""
+MAIN APPLICATION ENTRY POINT
+---------------------------
+This file serves as the main entry point for the Transinia application.
+It provides:
+
+1. Command-line interface for processing meeting transcripts
+2. Functions to load transcripts from local files or S3 storage
+3. Pipeline execution to analyze transcripts and extract information
+4. Output handling to save results locally or to S3
+
+Usage:
+1. For local transcripts: python -m src.app
+2. For S3 stored transcripts: python -m src.app --source s3 --s3-key your_transcript.txt
+3. To list available S3 transcripts: python -m src.app --list-s3
+"""
+
 import sys
 import argparse
 from src.config.settings import logger

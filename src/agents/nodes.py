@@ -1,3 +1,19 @@
+"""
+AI PROCESSING FUNCTIONS FOR MEETING ANALYSIS
+-------------------------------------------
+This file implements the individual AI processing functions that extract information
+from meeting transcripts. Each function has a specific purpose:
+
+- ingest_local_text: Validates and prepares the transcript for processing
+- extract_agenda: Identifies and lists key agenda items from the transcript
+- extract_decisions: Finds formal decisions that were made during the meeting
+- assign_tasks: Recognizes action items and who they were assigned to
+- draft_minutes: Creates a formatted summary of the meeting in Markdown
+
+Each function uses AI prompts to intelligently extract specific information types
+from natural language text, then returns structured data for the next step.
+"""
+
 from datetime import date
 from typing import Dict, Any, List
 from src.models.schemas import MeetingState, Task

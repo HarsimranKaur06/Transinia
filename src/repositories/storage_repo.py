@@ -1,3 +1,20 @@
+"""
+STORAGE AND PERSISTENCE MANAGER
+-----------------------------
+This file handles all data persistence operations for the application.
+It provides methods to:
+
+1. Save meeting minutes as formatted Markdown files locally
+2. Save action items as structured JSON files locally
+3. Save meeting minutes to AWS S3 cloud storage
+4. Save action items to AWS S3 cloud storage
+5. Retrieve meeting transcripts from S3
+6. List available transcripts in S3 storage
+
+The repository abstracts storage details away from the rest of the application,
+providing a consistent interface regardless of where data is stored.
+"""
+
 import json
 from src.utils.paths import MINUTES_MD, ACTIONS_JSON
 from src.config.settings import logger

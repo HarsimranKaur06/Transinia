@@ -1,3 +1,21 @@
+"""
+AI MODEL INTEGRATION SERVICE
+--------------------------
+This file provides the interface to OpenAI's language models.
+Specifically, it:
+
+1. Initializes the connection to OpenAI using the API key
+2. Provides the chat_5_8_sentences() function which:
+   - Takes system instructions and user input
+   - Sends them to the GPT-4o-mini model
+   - Sets appropriate parameters for reliable outputs
+   - Returns the AI-generated response
+
+This service abstracts away the details of API communication and
+parameter settings, making it easy to use AI capabilities throughout
+the application.
+"""
+
 from openai import OpenAI
 from src.config.settings import settings
 

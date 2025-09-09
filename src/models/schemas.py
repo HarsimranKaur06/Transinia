@@ -1,3 +1,26 @@
+"""
+DATA MODELS AND STATE MANAGEMENT
+------------------------------
+This file defines the data structures that track and store meeting information.
+It provides:
+
+1. Task class - A structured representation of an action item including:
+   - The person assigned to the task
+   - The task description
+   - Due date information
+   - Priority level (High/Med/Low)
+
+2. MeetingState class - The core state object that tracks all information about
+   a meeting as it flows through the processing pipeline, including:
+   - The original transcript
+   - Extracted agenda items
+   - Identified decisions
+   - Assigned tasks
+   - Generated meeting minutes
+
+These Pydantic models ensure data validation and consistent structure.
+"""
+
 from typing import List, Literal, Optional
 from pydantic import BaseModel, Field
 
