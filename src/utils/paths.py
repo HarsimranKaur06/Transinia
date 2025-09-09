@@ -24,3 +24,9 @@ OUTPUTS_DIR = ROOT / "outputs"
 TRANSCRIPT_TXT = SAMPLES_DIR / "transcript.txt"
 MINUTES_MD = OUTPUTS_DIR / "minutes.md"
 ACTIONS_JSON = OUTPUTS_DIR / "actions.json"
+
+def get_output_dir() -> Path:
+    """Get the output directory and ensure it exists."""
+    output_dir = OUTPUTS_DIR
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir

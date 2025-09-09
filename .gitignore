@@ -57,3 +57,20 @@ meeting-bot-transcripts/
 # Docker
 .docker/
 docker-compose.override.yml
+
+# Terraform
+.terraform/
+**/.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars
+**/*.exe
+**/terraform-provider-aws*
+
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.backup
+terraform.tfvars
+**/terraform-provider-*.exe
