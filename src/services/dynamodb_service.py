@@ -44,32 +44,9 @@ class DynamoDBService:
         meeting_id = str(uuid.uuid4())
         today = datetime.now().isoformat()
         
-        # Extract participants from transcript (simple implementation)
+        # Extract participants from transcript (enhanced implementation)
         participants = []
         participant_keys = []
-        
-        transcript = state.transcript if hasattr(state, 'transcript') else ""
-        if transcript and "Attendees:" in transcript:
-            attendee_line = transcript.split("\n")[0]
-            if "Attendees:" in attendee_line:
-                participants = [
-                    name.strip() for name in 
-                    attendee_line.replace("Attendees:", "").split(",")
-                ]
-                # Create participant keys for searching
-                participant_keys = [f"PARTICIPANT#{name.strip().lower()}" for name in participants]
-        
-        # Prepare tasks for storage
-        tasks = []
-        if hasattr(state, 'tasks') and state.tasks:
-            # Check if tasks is already a list of dicts or a list of Task objects
-            if isinstance(state.tasks[0], dict):
-                tasks = state.tasks
-            else:
-                tasks = [task.model_dump() for task in state.tasks]
-            
-            # Also store individual tasks in the actions table
-            self._store_tasks(meeting_id, today, tasks)
         
         # Handle different types of state objects (direct attribute access or dict-like access)
         # This accommodates both Pydantic models and LangGraph's AddableValuesDict
@@ -79,12 +56,56 @@ class DynamoDBService:
             decisions = state.get("decisions", [])
             minutes_md = state.get("minutes_md", "")
             source = state.get("source", "unknown")
+            transcript = state.get("transcript", "")
+            tasks = state.get("tasks", [])
         else:
             # Direct attribute access (for Pydantic model or similar)
             agenda = state.agenda if hasattr(state, 'agenda') else []
             decisions = state.decisions if hasattr(state, 'decisions') else []
             minutes_md = state.minutes_md if hasattr(state, 'minutes_md') else ""
             source = state.source if hasattr(state, 'source') else "unknown"
+            transcript = state.transcript if hasattr(state, 'transcript') else ""
+            tasks = state.tasks if hasattr(state, 'tasks') else []
+        
+        # Extract participants from transcript
+        if transcript:
+            # Try to find attendees list
+            if "Attendees:" in transcript:
+                attendee_line = ""
+                for line in transcript.split("\n"):
+                    if "Attendees:" in line:
+                        attendee_line = line
+                        break
+                
+                if attendee_line:
+                    participants = [
+                        name.strip() for name in 
+                        attendee_line.replace("Attendees:", "").split(",")
+                    ]
+            
+            # If no attendees list, extract participants from tasks
+            if not participants and tasks:
+                # Extract owners from tasks
+                for task in tasks:
+                    owner = task.get('owner', '') if isinstance(task, dict) else getattr(task, 'owner', '')
+                    if owner and owner not in participants:
+                        participants.append(owner)
+            
+            # Create participant keys for searching
+            participant_keys = [f"PARTICIPANT#{name.strip().lower()}" for name in participants]
+        
+        # Prepare tasks for storage
+        task_dicts = []
+        if tasks:
+            # Check if tasks is already a list of dicts or a list of Task objects
+            if isinstance(tasks, list) and len(tasks) > 0:
+                if isinstance(tasks[0], dict):
+                    task_dicts = tasks
+                else:
+                    task_dicts = [task.model_dump() for task in tasks]
+                
+                # Also store individual tasks in the actions table
+                self._store_tasks(meeting_id, today, task_dicts)
         
         # Create item for DynamoDB meetings table
         item = {
@@ -94,7 +115,7 @@ class DynamoDBService:
             'minutes_md': minutes_md,
             'agenda': agenda,
             'decisions': decisions,
-            'tasks': tasks,
+            'tasks': task_dicts,
             'participants': participants,
             'participant_key': participant_keys[0] if participant_keys else "PARTICIPANT#unknown",
             'metadata': {
@@ -211,22 +232,44 @@ class DynamoDBService:
     def find_meetings_by_participant(self, name: str) -> List[Dict[str, Any]]:
         """
         Find all meetings where a specific person participated.
-        Uses the participant-index GSI.
+        First tries GSI on participant-index, then falls back to scanning the participants list.
         """
         try:
+            meetings = []
             # Format the participant key in the same way it's stored
             participant_key = f"PARTICIPANT#{name.lower()}"
             
-            response = self.meetings_table.query(
-                IndexName='participant-index',
-                KeyConditionExpression=boto3.dynamodb.conditions.Key('participant_key').eq(participant_key)
-            )
+            # First try using the GSI
+            try:
+                response = self.meetings_table.query(
+                    IndexName='participant-index',
+                    KeyConditionExpression=boto3.dynamodb.conditions.Key('participant_key').eq(participant_key)
+                )
+                
+                if 'Items' in response:
+                    meetings.extend(response['Items'])
+            except Exception as e:
+                logger.debug(f"Error querying participant-index GSI: {e}")
             
-            if 'Items' in response:
-                meetings = response['Items']
-                logger.info(f"Found {len(meetings)} meetings with participant: {name}")
-                return meetings
-            return []
+            # If GSI query didn't yield results, try scanning the participants list
+            if not meetings:
+                response = self.meetings_table.scan(
+                    FilterExpression=boto3.dynamodb.conditions.Attr('participants').contains(name)
+                )
+                
+                if 'Items' in response:
+                    meetings.extend(response['Items'])
+            
+            # Deduplicate meetings (in case the same meeting was found by both methods)
+            unique_meetings = {}
+            for meeting in meetings:
+                meeting_id = meeting.get('meeting_id', '')
+                if meeting_id:
+                    unique_meetings[meeting_id] = meeting
+            
+            result = list(unique_meetings.values())
+            logger.info(f"Found {len(result)} meetings with participant: {name}")
+            return result
         except Exception as e:
             logger.error(f"Error searching meetings by participant: {e}")
             return []
