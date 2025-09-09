@@ -10,6 +10,7 @@ It provides:
    - OpenAI API credentials for AI services
    - AWS access credentials for S3 storage
    - S3 bucket names for raw transcripts and processed outputs
+   - DynamoDB table names for persistent storage
    - Other configurable application parameters
 
 This centralized configuration makes the application more maintainable
@@ -39,5 +40,11 @@ class Settings:
     # S3 buckets
     s3_bucket_raw: str = os.getenv("S3_BUCKET_RAW", "meeting-bot-transcripts")
     s3_bucket_processed: str = os.getenv("S3_BUCKET_PROCESSED", "meeting-bot-outputs")
+    # DynamoDB settings
+    use_dynamodb: bool = os.getenv("USE_DYNAMODB", "false").lower() in ("true", "1", "yes")
+    dynamodb_table_meetings: str = os.getenv("DYNAMODB_TABLE_MEETINGS", "transinia-meetings")
+    dynamodb_table_actions: str = os.getenv("DYNAMODB_TABLE_ACTIONS", "transinia-actions")
+    # Legacy setting for backward compatibility
+    dynamodb_table_name: str = os.getenv("DYNAMODB_TABLE_NAME", "transinia-meetings")
 
 settings = Settings()

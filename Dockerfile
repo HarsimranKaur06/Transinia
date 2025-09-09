@@ -17,4 +17,4 @@ ENV PYTHONUNBUFFERED=1
 
 # Default command - will use local mode by default
 # This can be overridden from docker-compose.yml or command line
-ENTRYPOINT ["python", "-m", "src.app"]
+ENTRYPOINT ["python", "run_app.py"]
