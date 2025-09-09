@@ -71,11 +71,20 @@ class DynamoDBService:
             # Also store individual tasks in the actions table
             self._store_tasks(meeting_id, today, tasks)
         
-        # Get other attributes with safe fallbacks
-        agenda = state.agenda if hasattr(state, 'agenda') else []
-        decisions = state.decisions if hasattr(state, 'decisions') else []
-        minutes_md = state.minutes_md if hasattr(state, 'minutes_md') else ""
-        source = state.source if hasattr(state, 'source') else "unknown"
+        # Handle different types of state objects (direct attribute access or dict-like access)
+        # This accommodates both Pydantic models and LangGraph's AddableValuesDict
+        if hasattr(state, 'get'):
+            # Dict-like access (for AddableValuesDict from LangGraph)
+            agenda = state.get("agenda", [])
+            decisions = state.get("decisions", [])
+            minutes_md = state.get("minutes_md", "")
+            source = state.get("source", "unknown")
+        else:
+            # Direct attribute access (for Pydantic model or similar)
+            agenda = state.agenda if hasattr(state, 'agenda') else []
+            decisions = state.decisions if hasattr(state, 'decisions') else []
+            minutes_md = state.minutes_md if hasattr(state, 'minutes_md') else ""
+            source = state.source if hasattr(state, 'source') else "unknown"
         
         # Create item for DynamoDB meetings table
         item = {
@@ -141,22 +150,57 @@ class DynamoDBService:
         """
         try:
             # First try to find the meeting using a scan with a filter on meeting_id
+            # This is more flexible but less efficient
             response = self.meetings_table.scan(
                 FilterExpression=boto3.dynamodb.conditions.Attr('meeting_id').eq(meeting_id)
             )
             
             if 'Items' in response and len(response['Items']) > 0:
+                # Process the items to ensure all expected fields are present
+                meeting_data = response['Items'][0]
+                
+                # Ensure all expected fields have at least default values
+                if 'agenda' not in meeting_data:
+                    meeting_data['agenda'] = []
+                if 'decisions' not in meeting_data:
+                    meeting_data['decisions'] = []
+                if 'tasks' not in meeting_data:
+                    meeting_data['tasks'] = []
+                if 'participants' not in meeting_data:
+                    meeting_data['participants'] = []
+                if 'minutes_md' not in meeting_data:
+                    meeting_data['minutes_md'] = ""
+                
                 logger.info(f"Meeting retrieved from DynamoDB: {meeting_id}")
-                return response['Items'][0]
+                return meeting_data
             
             # If not found with scan, try the direct key query (original approach)
+            # This would work if we knew the date value for the range key
             try:
-                response = self.meetings_table.get_item(Key={'meeting_id': meeting_id})
-                if 'Item' in response:
+                # Try to query the table with just the hash key and let DynamoDB scan the range
+                response = self.meetings_table.query(
+                    KeyConditionExpression=boto3.dynamodb.conditions.Key('meeting_id').eq(meeting_id)
+                )
+                
+                if 'Items' in response and len(response['Items']) > 0:
+                    meeting_data = response['Items'][0]
+                    
+                    # Ensure all expected fields have at least default values
+                    if 'agenda' not in meeting_data:
+                        meeting_data['agenda'] = []
+                    if 'decisions' not in meeting_data:
+                        meeting_data['decisions'] = []
+                    if 'tasks' not in meeting_data:
+                        meeting_data['tasks'] = []
+                    if 'participants' not in meeting_data:
+                        meeting_data['participants'] = []
+                    if 'minutes_md' not in meeting_data:
+                        meeting_data['minutes_md'] = ""
+                    
                     logger.info(f"Meeting retrieved from DynamoDB: {meeting_id}")
-                    return response['Item']
+                    return meeting_data
             except Exception as inner_e:
-                logger.debug(f"Direct key query failed: {inner_e}")
+                logger.debug(f"Query operation failed: {inner_e}")
             
             logger.warning(f"Meeting not found in DynamoDB: {meeting_id}")
             return None

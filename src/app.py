@@ -189,6 +189,7 @@ def main():
     
     # Save to DynamoDB if enabled
     if settings.use_dynamodb:
+        # Make sure we're passing the complete state to DynamoDB
         meeting_id = storage_repo.save_meeting_to_dynamodb(final_state)
         if meeting_id:
             logger.info(f"Meeting saved to DynamoDB with ID: {meeting_id}")
