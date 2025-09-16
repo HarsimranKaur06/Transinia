@@ -5,7 +5,10 @@ export interface Transcript {
   id: string;
   name: string;
   date: string;
-  // Add more fields as needed for your application
+  processed: boolean;
+  meetingDataId?: string;
+  size?: number;
+  source?: string;
 }
 
 // Action Item type (for meeting insights)
@@ -14,6 +17,7 @@ export interface ActionItem {
   text: string;
   assignee?: string;
   completed: boolean;
+  priority?: string;
 }
 
 // Meeting Insight type
@@ -26,6 +30,7 @@ export interface Insight {
   keyPoints: string[];
   participants: string[];
   duration: string;
+  source?: string;
   // Add more fields as needed for your application
 }
 

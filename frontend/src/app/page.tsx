@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import Image from 'next/image';
 import { ArrowRight, FileText, ListChecks, Users } from 'lucide-react';
 
 export default function Home() {
@@ -11,12 +12,6 @@ export default function Home() {
             <span className="text-2xl font-bold">Transinia</span>
           </div>
           <nav className="ml-auto flex gap-4 sm:gap-6">
-            <Link 
-              href="/dashboard" 
-              className="text-sm font-medium hover:underline underline-offset-4"
-            >
-              Dashboard
-            </Link>
             <Link 
               href="/transcripts" 
               className="text-sm font-medium hover:underline underline-offset-4"
@@ -52,12 +47,14 @@ export default function Home() {
             </div>
             <div className="flex justify-center">
               <div className="relative w-full max-w-[500px]">
-                {/* Placeholder for illustration */}
-                <div className="aspect-video overflow-hidden rounded-xl bg-neutral-100 object-cover object-center border border-neutral-200 flex items-center justify-center p-6">
-                  <div className="text-center">
-                    <FileText className="h-16 w-16 mx-auto mb-4 text-neutral-400" />
-                    <p className="text-neutral-500">Transcript to Insights Visualization</p>
-                  </div>
+                <div className="aspect-video overflow-hidden rounded-xl border border-neutral-200 relative">
+                  <Image 
+                    src="/trasncript-insights.png"
+                    alt="Transcript to Insights Visualization"
+                    fill
+                    className="object-cover"
+                    priority
+                  />
                 </div>
               </div>
             </div>

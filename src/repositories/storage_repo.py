@@ -146,7 +146,66 @@ class StorageRepository:
             logger.error(f"Failed to list S3 transcripts: {str(e)}")
             return []
     
-    # DynamoDB methods
+    def list_processed_files(self, prefix: str = None) -> List[str]:
+        """List all files in the processed bucket with an optional prefix."""
+        if not self.s3_service:
+            logger.warning("S3 service not available. Cannot list processed files.")
+            return []
+        
+        try:
+            return self.s3_service.list_processed_files(prefix)
+        except Exception as e:
+            logger.error(f"Failed to list processed files: {str(e)}")
+            return []
+    
+    def get_file_from_s3(self, key: str) -> Optional[str]:
+        """Get file content from S3."""
+        if not self.s3_service:
+            logger.warning("S3 service not available. Cannot get file from S3.")
+            return None
+        
+        try:
+            content = self.s3_service.get_file(key)
+            if content:
+                logger.info(f"Retrieved file from S3: {key}")
+            return content
+        except Exception as e:
+            logger.error(f"Failed to get file from S3: {str(e)}")
+            return None
+            
+    def save_file_to_s3(self, key: str, content: Union[str, bytes]) -> bool:
+        """Save file to S3."""
+        if not self.s3_service:
+            logger.warning("S3 service not available. Cannot save file to S3.")
+            return False
+        
+        try:
+            result = self.s3_service.save_file(key, content)
+            if result:
+                logger.info(f"Saved file to S3: {key}")
+            return result
+        except Exception as e:
+            logger.error(f"Failed to save file to S3: {str(e)}")
+            return False
+    
+    def get_s3_object_metadata(self, key: str) -> Optional[Dict]:
+        """Get S3 object metadata."""
+        if not self.s3_service:
+            logger.warning("S3 service not available. Cannot get S3 object metadata.")
+            return None
+        
+        try:
+            metadata = self.s3_service.get_object_metadata(key)
+            return metadata
+        except Exception as e:
+            logger.error(f"Failed to get S3 object metadata: {str(e)}")
+            return None
+        
+        try:
+            return self.s3_service.get_object_metadata(key)
+        except Exception as e:
+            logger.error(f"Failed to get S3 object metadata: {str(e)}")
+            return None
     def save_meeting_to_dynamodb(self, state: Union[MeetingState, Dict[str, Any]]) -> str:
         """Save complete meeting state to DynamoDB."""
         if not self.dynamodb_service:
@@ -205,6 +264,18 @@ class StorageRepository:
             return self.dynamodb_service.find_high_priority_tasks()
         except Exception as e:
             logger.error(f"Failed to find high priority tasks: {str(e)}")
+            return []
+    
+    def list_meetings_from_dynamodb(self) -> List[Dict]:
+        """List all meetings from DynamoDB."""
+        if not self.dynamodb_service:
+            logger.warning("DynamoDB service not available. Cannot list meetings.")
+            return []
+        
+        try:
+            return self.dynamodb_service.list_meetings()
+        except Exception as e:
+            logger.error(f"Failed to list meetings from DynamoDB: {str(e)}")
             return []
     
     def mark_task_completed(self, action_id: str, meeting_id: str, completed: bool = True) -> bool:

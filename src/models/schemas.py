@@ -61,6 +61,7 @@ class MeetingState(BaseModel):
     # Source can be any string or dictionary to allow flexibility
     source: Union[str, Dict[str, Any]] = Field(default="local_text", description="Source of the meeting transcript")
     transcript: Optional[str] = Field(default=None, description="Raw meeting transcript")
+    title: Optional[str] = Field(default=None, description="Concise meeting title extracted from transcript")
     agenda: List[str] = Field(default_factory=list, description="Extracted agenda items")
     decisions: List[str] = Field(default_factory=list, description="Extracted decisions")
     tasks: List[Union[Task, Dict[str, Any]]] = Field(default_factory=list, description="Extracted action items")
@@ -96,6 +97,7 @@ class MeetingState(BaseModel):
         return {
             "transcript": self.transcript,
             "source": source_str,
+            "title": self.title,
             "minutes_md": self.minutes_md,
             "agenda": self.agenda,
             "decisions": self.decisions,

@@ -168,6 +168,10 @@ def main():
     logger.info("Processing transcript...")
     final_state = graph.invoke(state)
     
+    # Debug - print the entire state for inspection
+    logger.info(f"Final state contains: {dir(final_state)}")
+    logger.info(f"Title in final state: {getattr(final_state, 'title', None) if hasattr(final_state, 'title') else final_state.get('title', None) if hasattr(final_state, 'get') else None}")
+    
     # Extract values from final_state safely
     if hasattr(final_state, 'get'):
         minutes_md = final_state.get("minutes_md", "")
@@ -239,6 +243,15 @@ def main():
     print("=" * 60)
     print(f"Meeting ID: {meeting_id}")
     print(f"Source: {source}")
+    
+    # Extract and display title
+    title = ""
+    if hasattr(final_state, 'get'):
+        title = final_state.get("title", "Untitled Meeting")
+    else:
+        title = getattr(final_state, "title", "Untitled Meeting")
+    print(f"Title: {title}")
+    
     print(f"Agenda Items: {len(agenda)}")
     print(f"Decisions: {len(decisions)}")
     print(f"Action Items: {len(tasks) if tasks else 0}")

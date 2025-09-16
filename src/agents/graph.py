@@ -17,7 +17,8 @@ meeting transcripts through the complete analysis pipeline in the right order.
 from langgraph.graph import StateGraph, END
 from src.models.schemas import MeetingState
 from src.agents.nodes import (
-    ingest_local_text, extract_agenda, extract_decisions, assign_tasks, draft_minutes
+    ingest_local_text, extract_title, extract_agenda, extract_decisions, 
+    extract_participants, assign_tasks, draft_minutes
 )
 
 def create_graph():
@@ -30,16 +31,20 @@ def create_graph():
 
     # Add processing nodes
     graph.add_node("ingest_local_text", ingest_local_text)
+    graph.add_node("extract_title", extract_title)
     graph.add_node("extract_agenda", extract_agenda)
     graph.add_node("extract_decisions", extract_decisions)
+    graph.add_node("extract_participants", extract_participants)
     graph.add_node("assign_tasks", assign_tasks)
     graph.add_node("draft_minutes", draft_minutes)
 
     # Connect nodes in sequence
     graph.set_entry_point("ingest_local_text")
-    graph.add_edge("ingest_local_text", "extract_agenda")
+    graph.add_edge("ingest_local_text", "extract_title")
+    graph.add_edge("extract_title", "extract_agenda")
     graph.add_edge("extract_agenda", "extract_decisions")
-    graph.add_edge("extract_decisions", "assign_tasks")
+    graph.add_edge("extract_decisions", "extract_participants")
+    graph.add_edge("extract_participants", "assign_tasks")
     graph.add_edge("assign_tasks", "draft_minutes")
     graph.add_edge("draft_minutes", END)
 

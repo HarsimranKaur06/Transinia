@@ -7,6 +7,7 @@ as a REST API for the frontend to consume.
 
 import os
 import uuid
+import json
 import tempfile
 from typing import List, Optional
 from datetime import datetime
@@ -43,8 +44,10 @@ class TranscriptResponse(BaseModel):
     date: str
     size: Optional[int] = None
     source: str = "s3"
+    processed: bool = False
+    meetingDataId: Optional[str] = None
 
-class InsightRequest(BaseModel):
+class MeetingDataRequest(BaseModel):
     transcriptId: str
 
 class ActionItem(BaseModel):
@@ -79,8 +82,33 @@ async def root():
 async def list_transcripts():
     """List all available transcripts"""
     try:
+        # Debug: print AWS credentials (redacted)
+        logger.info(f"AWS Access Key ID available: {'Yes' if settings.aws_access_key_id else 'No'}")
+        logger.info(f"AWS Secret Key available: {'Yes' if settings.aws_secret_access_key else 'No'}")
+        logger.info(f"S3 Bucket Raw: {settings.s3_bucket_raw}")
+        
         # Get transcripts from S3
         s3_transcripts = storage_repo.list_s3_transcripts()
+        logger.info(f"S3 transcripts found: {len(s3_transcripts)}")
+        
+        # Get all meeting data files to check which transcripts have been processed
+        s3_meeting_data = storage_repo.list_processed_files("meeting_data/")
+        meeting_data_entries = []
+        
+        # Load all meeting data entries to match with transcripts
+        for key in s3_meeting_data:
+            if key.endswith(".json"):
+                meeting_data_json = storage_repo.get_file_from_s3(key)
+                if meeting_data_json:
+                    try:
+                        meeting_data = json.loads(meeting_data_json)
+                        if "source" in meeting_data and "id" in meeting_data:
+                            meeting_data_entries.append({
+                                "source": meeting_data["source"],
+                                "id": meeting_data["id"]
+                            })
+                    except json.JSONDecodeError:
+                        logger.warning(f"Could not parse meeting data JSON: {key}")
         
         # Format the response
         transcripts = []
@@ -97,12 +125,24 @@ async def list_transcripts():
             if metadata and 'LastModified' in metadata:
                 date_str = metadata['LastModified'].strftime("%B %d, %Y")
             
+            # Check if this transcript has been processed
+            processed = False
+            meeting_data_id = None
+            
+            for entry in meeting_data_entries:
+                if entry["source"] == key:
+                    processed = True
+                    meeting_data_id = entry["id"]
+                    break
+            
             transcript = TranscriptResponse(
                 id=key,
                 name=filename,
                 date=date_str,
                 size=metadata.get('ContentLength') if metadata else None,
-                source="s3"
+                source="s3",
+                processed=processed,
+                meetingDataId=meeting_data_id
             )
             
             transcripts.append(transcript.model_dump())
@@ -112,6 +152,69 @@ async def list_transcripts():
     except Exception as e:
         logger.error(f"Error listing transcripts: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to list transcripts: {str(e)}")
+
+@app.get("/api/transcripts/{transcript_id}")
+async def get_transcript(transcript_id: str):
+    """Get the content of a transcript by ID"""
+    try:
+        # Log the incoming transcript ID
+        logger.info(f"API Endpoint: Getting transcript with ID: {transcript_id}")
+        
+        # Clean up the transcript ID - remove any URL encoding
+        import urllib.parse
+        decoded_id = urllib.parse.unquote(transcript_id)
+        logger.info(f"Decoded transcript ID: {decoded_id}")
+        
+        # Check if this looks like a UUID
+        import re
+        uuid_pattern = r'([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})'
+        uuid_match = re.search(uuid_pattern, decoded_id)
+        
+        # If we have a UUID in the transcript ID, log it
+        if uuid_match:
+            uuid = uuid_match.group(1)
+            logger.info(f"Transcript ID contains UUID: {uuid}")
+            
+            # First try with the UUID only if the ID is exactly a UUID
+            if decoded_id == uuid:
+                logger.info(f"ID is exactly a UUID, trying various formats with UUID: {uuid}")
+                # Just let the S3 service handle it - it has specialized UUID search
+        
+        # Try to get the transcript - the S3 service now has robust handling of various key formats
+        transcript_content = storage_repo.get_transcript_from_s3(decoded_id)
+        
+        # Log the result of the retrieval attempt
+        logger.info(f"Transcript retrieval result: {'Success' if transcript_content else 'Not Found'}")
+        
+        if not transcript_content:
+            # Get list of all transcripts to log what's available
+            all_transcripts = storage_repo.list_s3_transcripts()
+            logger.info(f"Available transcripts: {all_transcripts}")
+            
+            logger.error(f"Transcript not found after all attempts: {transcript_id}")
+            raise HTTPException(status_code=404, detail=f"Transcript not found: {transcript_id}")
+        
+        # Extract filename from the S3 key - get the basename without path
+        filename = os.path.basename(decoded_id)
+        
+        # Return the transcript content with the filename
+        return {
+            "success": True,
+            "filename": filename,
+            "content": transcript_content
+        }
+    except HTTPException as e:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        logger.error(f"Error getting transcript: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get transcript: {str(e)}")
+    except HTTPException as e:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        logger.error(f"Error getting transcript: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get transcript: {str(e)}")
 
 @app.post("/api/transcripts/upload")
 async def upload_transcript(file: UploadFile = File(...)):
@@ -132,7 +235,7 @@ async def upload_transcript(file: UploadFile = File(...)):
         filename = file.filename
         s3_key = f"transcripts/{file_uuid}_{filename}"
         
-        # Save to S3
+        # Save to S3 - we'll force this to go to the raw bucket
         if storage_repo.save_file_to_s3(s3_key, content):
             return {
                 "success": True,
@@ -149,12 +252,38 @@ async def upload_transcript(file: UploadFile = File(...)):
         logger.error(f"Error uploading transcript: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to upload transcript: {str(e)}")
 
-@app.post("/api/insights/generate")
-async def generate_insights(request: InsightRequest):
-    """Generate insights from a transcript"""
+@app.post("/api/meeting-data/generate")
+async def generate_meeting_data(request: MeetingDataRequest):
+    """Generate meeting data from a transcript"""
     try:
         # Get transcript from S3
         transcript_id = request.transcriptId
+        
+        # First, check if this transcript has already been processed
+        # Get all meeting data files to check
+        s3_meeting_data = storage_repo.list_processed_files("meeting_data/")
+        
+        # Check if any meeting data entries have this transcript as source
+        for key in s3_meeting_data:
+            if not key.endswith(".json"):
+                continue
+                
+            meeting_data_json = storage_repo.get_file_from_s3(key)
+            if meeting_data_json:
+                try:
+                    meeting_data = json.loads(meeting_data_json)
+                    if meeting_data.get("source") == transcript_id:
+                        logger.info(f"Transcript {transcript_id} already processed as meeting {meeting_data.get('id')}")
+                        return {
+                            "success": True,
+                            "message": "Meeting data already exists for this transcript",
+                            "meetingDataId": meeting_data.get("id"),
+                            "alreadyProcessed": True
+                        }
+                except json.JSONDecodeError:
+                    logger.warning(f"Could not parse meeting data JSON: {key}")
+        
+        # If not already processed, continue with processing
         transcript_content = storage_repo.get_transcript_from_s3(transcript_id)
         
         if not transcript_content:
@@ -186,26 +315,26 @@ async def generate_insights(request: InsightRequest):
             tasks = getattr(final_state, "tasks", [])
             participants = getattr(final_state, "participants", [])
         
-        # Generate insight ID
+        # Generate meeting data ID
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        insight_id = f"insight_{timestamp}"
+        meeting_data_id = f"meeting_{timestamp}"
         
         # Store in DynamoDB if enabled
         if settings.use_dynamodb:
             meeting_id = storage_repo.save_meeting_to_dynamodb(final_state)
             if meeting_id:
-                insight_id = meeting_id
+                meeting_data_id = meeting_id
                 logger.info(f"Meeting saved to DynamoDB with ID: {meeting_id}")
         
         # Always save minutes and actions to S3
-        s3_minutes_key = f"minutes/{insight_id}.md"
-        s3_actions_key = f"actions/{insight_id}.json"
+        # Just pass the meeting_data_id without prefixes or extensions
+        # The S3 service will handle adding the proper prefix and extension
         
         # Save minutes to S3
-        if storage_repo.save_minutes_s3(s3_minutes_key, minutes_md):
-            logger.info(f"Minutes saved to S3: {s3_minutes_key}")
+        if storage_repo.save_minutes_s3(meeting_data_id, minutes_md):
+            logger.info(f"Minutes saved to S3: minutes/{meeting_data_id}.md")
         else:
-            logger.warning(f"Failed to save minutes to S3: {s3_minutes_key}")
+            logger.warning(f"Failed to save minutes to S3: minutes/{meeting_data_id}.md")
         
         # Save actions to S3
         if tasks:
@@ -214,15 +343,15 @@ async def generate_insights(request: InsightRequest):
             else:
                 tasks_dict = tasks
                 
-            if storage_repo.save_actions_s3(s3_actions_key, tasks_dict):
-                logger.info(f"Actions saved to S3: {s3_actions_key}")
+            if storage_repo.save_actions_s3(meeting_data_id, tasks_dict):
+                logger.info(f"Actions saved to S3: actions/{meeting_data_id}.json")
             else:
-                logger.warning(f"Failed to save actions to S3: {s3_actions_key}")
+                logger.warning(f"Failed to save actions to S3: actions/{meeting_data_id}.json")
         
-        # Save a JSON representation of the full insight for easy retrieval
-        insight_data = {
-            "id": insight_id,
-            "title": f"Meeting Notes: {os.path.splitext(filename)[0]}",
+        # Save a JSON representation of the full meeting data for easy retrieval
+        meeting_data = {
+            "id": meeting_data_id,
+            "title": final_state.get("title") if hasattr(final_state, "get") and final_state.get("title") else f"Meeting Notes: {os.path.splitext(filename)[0]}",
             "date": datetime.now().strftime("%B %d, %Y"),
             "summary": minutes_md[:500] if len(minutes_md) > 500 else minutes_md,
             "actionItems": [
@@ -239,61 +368,75 @@ async def generate_insights(request: InsightRequest):
             "source": transcript_id
         }
         
-        # Save the complete insight data to S3
-        s3_insight_key = f"insights/{insight_id}.json"
+        # Save the complete meeting data to S3 - use clean key without double extensions
+        s3_meeting_data_key = f"meeting_data/{meeting_data_id}.json"
         storage_repo.save_file_to_s3(
-            s3_insight_key, 
-            json.dumps(insight_data, indent=2).encode('utf-8')
+            s3_meeting_data_key, 
+            json.dumps(meeting_data, indent=2).encode('utf-8')
         )
-        logger.info(f"Complete insight data saved to S3: {s3_insight_key}")
+        logger.info(f"Complete meeting data saved to S3: {s3_meeting_data_key}")
         
-        # Return success response with the insight ID
+        # Return success response with the meeting data ID
         return {
             "success": True,
-            "message": "Meeting insights generated successfully",
-            "insightId": insight_id
+            "message": "Meeting data generated successfully",
+            "meetingDataId": meeting_data_id
         }
         
     except HTTPException as e:
         # Re-raise HTTP exceptions
         raise
     except Exception as e:
-        logger.error(f"Error generating insights: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to generate insights: {str(e)}")
+        logger.error(f"Error generating meeting data: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate meeting data: {str(e)}")
 
-@app.get("/api/insights/{insight_id}")
-async def get_insight(insight_id: str):
-    """Get meeting insights by ID"""
+@app.get("/api/meeting-data/{meeting_id}")
+async def get_meeting_data(meeting_id: str):
+    """Get meeting data by ID"""
     try:
-        # First try to get the complete insight JSON from S3
-        s3_insight_key = f"insights/{insight_id}.json"
-        insight_json = storage_repo.get_file_from_s3(s3_insight_key)
+        # First try to get the complete meeting data JSON from S3
+        s3_meeting_data_key = f"meeting_data/{meeting_id}.json"
+        meeting_data_json = storage_repo.get_file_from_s3(s3_meeting_data_key)
         
-        if insight_json:
-            # Return the pre-formatted insight JSON
-            return json.loads(insight_json)
+        if meeting_data_json:
+            # Parse the JSON data
+            meeting_data = json.loads(meeting_data_json)
+            
+            # Log the source field for debugging
+            if "source" in meeting_data:
+                logger.info(f"Meeting data source field: {meeting_data['source']}")
+                
+                # Log if source contains a UUID
+                import re
+                uuid_pattern = r'([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})'
+                uuid_match = re.search(uuid_pattern, meeting_data['source'])
+                if uuid_match:
+                    logger.info(f"Source contains UUID: {uuid_match.group(1)}")
+            
+            # Return the pre-formatted meeting data JSON
+            return meeting_data
         
         # If not found, try to get from DynamoDB
         meeting = None
         if settings.use_dynamodb:
-            meeting = storage_repo.get_meeting_from_dynamodb(insight_id)
+            meeting = storage_repo.get_meeting_from_dynamodb(meeting_id)
         
         # If not found in DynamoDB, try to get from S3 minutes and actions
         if not meeting:
             # Check if minutes exist in S3
-            s3_minutes_key = f"minutes/{insight_id}.md"
+            s3_minutes_key = f"minutes/{meeting_id}.md"
             minutes_md = storage_repo.get_file_from_s3(s3_minutes_key)
             
             if not minutes_md:
-                raise HTTPException(status_code=404, detail=f"Insight not found: {insight_id}")
+                raise HTTPException(status_code=404, detail=f"Meeting data not found: {meeting_id}")
             
             # Try to get actions from S3
-            s3_actions_key = f"actions/{insight_id}.json"
+            s3_actions_key = f"actions/{meeting_id}.json"
             actions_json = storage_repo.get_file_from_s3(s3_actions_key)
             
             # Create a basic meeting object
             meeting = {
-                "meeting_id": insight_id,
+                "meeting_id": meeting_id,
                 "date": datetime.now().strftime("%B %d, %Y"),
                 "minutes_md": minutes_md,
                 "tasks": json.loads(actions_json) if actions_json else [],
@@ -333,8 +476,8 @@ async def get_insight(insight_id: str):
             key_points.append(f"Decision: {decision}")
         
         # Create response object
-        insight = {
-            "id": meeting.get("meeting_id", insight_id),
+        meeting_data = {
+            "id": meeting.get("meeting_id", meeting_id),
             "title": title,
             "date": meeting.get("date", datetime.now().strftime("%B %d, %Y")),
             "summary": meeting.get("summary", meeting.get("minutes_md", "")[:500]),
@@ -345,21 +488,122 @@ async def get_insight(insight_id: str):
             "source": meeting.get("source", "Unknown")
         }
         
-        # Save this formatted insight for future use
+        # Save this formatted meeting data for future use
+        s3_meeting_data_key = f"meeting_data/{meeting_id}.json"
         storage_repo.save_file_to_s3(
-            s3_insight_key, 
-            json.dumps(insight, indent=2).encode('utf-8')
+            s3_meeting_data_key, 
+            json.dumps(meeting_data, indent=2).encode('utf-8')
         )
-        logger.info(f"Created and saved formatted insight to S3: {s3_insight_key}")
+        logger.info(f"Created and saved formatted meeting data to S3: {s3_meeting_data_key}")
         
-        return insight
+        return meeting_data
         
     except HTTPException as e:
         # Re-raise HTTP exceptions
         raise
     except Exception as e:
-        logger.error(f"Error getting insight: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to get insight: {str(e)}")
+        logger.error(f"Error getting meeting data: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get meeting data: {str(e)}")
+
+@app.get("/api/meeting-data/list")
+async def list_meeting_data():
+    """List all available meeting data"""
+    try:
+        # Get all meeting data files from S3
+        s3_meeting_data = storage_repo.list_s3_objects_with_prefix("meeting_data/")
+        
+        # Format the response
+        meeting_data_list = []
+        
+        for key in s3_meeting_data:
+            if not key.endswith(".json"):
+                continue
+                
+            # Get the meeting data from S3
+            meeting_data_json = storage_repo.get_file_from_s3(key)
+            
+            if meeting_data_json:
+                meeting_data = json.loads(meeting_data_json)
+                meeting_data_list.append(meeting_data)
+        
+        # If no meeting data found in S3, try DynamoDB
+        if not meeting_data_list and settings.use_dynamodb:
+            meetings = storage_repo.list_meetings_from_dynamodb()
+            
+            for meeting in meetings:
+                meeting_data = {
+                    "id": meeting.get("meeting_id", ""),
+                    "title": "Meeting Summary",
+                    "date": meeting.get("date", ""),
+                    "participants": meeting.get("participants", []),
+                    "actionItems": len(meeting.get("tasks", [])),
+                    "keyPoints": len(meeting.get("agenda", [])) + len(meeting.get("decisions", [])),
+                    "duration": meeting.get("duration", "Unknown")
+                }
+                meeting_data_list.append(meeting_data)
+        
+        return {"meetingData": meeting_data_list}
+    
+    except Exception as e:
+        logger.error(f"Error listing meeting data: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to list meeting data: {str(e)}")
+
+@app.get("/api/tasks/high-priority")
+async def get_high_priority_tasks():
+    """Get high priority tasks from all meetings"""
+    try:
+        high_priority_tasks = []
+        
+        # Get all meeting data files from S3
+        s3_meeting_data = storage_repo.list_s3_objects_with_prefix("meeting_data/")
+        
+        for key in s3_meeting_data:
+            if not key.endswith(".json"):
+                continue
+                
+            # Get the meeting data from S3
+            meeting_data_json = storage_repo.get_file_from_s3(key)
+            
+            if meeting_data_json:
+                meeting_data = json.loads(meeting_data_json)
+                meeting_id = meeting_data.get("id", "")
+                
+                # Extract high priority tasks
+                action_items = meeting_data.get("actionItems", [])
+                for item in action_items:
+                    if item.get("priority", "").lower() == "high" or item.get("priority", "").lower() == "urgent":
+                        task = {
+                            "id": item.get("id", ""),
+                            "text": item.get("text", ""),
+                            "owner": item.get("owner", ""),
+                            "due": item.get("due", ""),
+                            "priority": "High",
+                            "completed": item.get("completed", False),
+                            "meetingId": meeting_id
+                        }
+                        high_priority_tasks.append(task)
+        
+        # If no tasks found in S3, try DynamoDB
+        if not high_priority_tasks and settings.use_dynamodb:
+            tasks = storage_repo.find_high_priority_tasks()
+            
+            for task in tasks:
+                high_priority_task = {
+                    "id": str(uuid.uuid4()),
+                    "text": task.get("task", ""),
+                    "owner": task.get("owner", ""),
+                    "due": task.get("due", ""),
+                    "priority": "High",
+                    "completed": task.get("completed", False),
+                    "meetingId": task.get("meeting_id", "")
+                }
+                high_priority_tasks.append(high_priority_task)
+        
+        return {"tasks": high_priority_tasks}
+    
+    except Exception as e:
+        logger.error(f"Error getting high priority tasks: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get high priority tasks: {str(e)}")
 
 # Add missing import at the top of the file
 import json

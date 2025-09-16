@@ -57,6 +57,31 @@ npm run dev
 
 This will start the frontend development server, typically at http://localhost:3000.
 
+## Frontend-Backend Integration
+
+The frontend and backend are designed to work together:
+
+1. The backend (FastAPI) provides API endpoints at http://localhost:5000:
+   - `/api/transcripts/list` - List available transcripts
+   - `/api/transcripts/upload` - Upload a new transcript
+   - `/api/insights/generate` - Generate insights from a transcript
+   - `/api/insights/{insight_id}` - Get meeting insights by ID
+
+2. The frontend connects to these endpoints through the API client in `frontend/src/lib/api/index.js`.
+
+3. To connect the frontend to the backend:
+   - Start the backend: `python run_api.py`
+   - Start the frontend: `cd frontend && npm run dev`
+   - Make sure your `.env.local` file in the frontend directory has the correct API URLs:
+     ```
+     NEXT_PUBLIC_API_URL=http://localhost:3000/api
+     NEXT_PUBLIC_BACKEND_URL=http://localhost:5000
+     ```
+
+4. The frontend will fetch data from:
+   - Transcripts from the S3 bucket "meeting-bot-transcripts"
+   - Processed insights from the S3 bucket "meeting-bot-outputs"
+
 ### S3 Mode
 List available transcripts in S3:
 ```bash

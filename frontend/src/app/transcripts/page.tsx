@@ -11,6 +11,8 @@ interface Transcript {
   id: string;
   name: string;
   date: string;
+  processed: boolean;
+  meetingDataId?: string;
 }
 
 export default function TranscriptsPage() {
@@ -30,27 +32,23 @@ export default function TranscriptsPage() {
     async function loadTranscripts() {
       try {
         setIsLoading(true);
-        // For development, we'll use our sample data first, then try the API
+        // Try to get real transcripts from the API
         try {
+          console.log("Attempting to fetch transcripts from API");
           const apiTranscripts = await getTranscripts();
+          console.log("API returned:", apiTranscripts);
           if (apiTranscripts && apiTranscripts.length > 0) {
             setTranscripts(apiTranscripts);
           } else {
-            // Fall back to sample data
-            setTranscripts([
-              { id: '1', name: 'transcript.txt', date: 'September 9, 2025' },
-              { id: '2', name: 'meeting-sept.txt', date: 'September 5, 2025' },
-              { id: '3', name: 'product-planning.txt', date: 'August 24, 2025' }
-            ]);
+            console.log("API returned empty transcripts list");
+            // Empty state - no transcripts yet
+            setTranscripts([]);
           }
         } catch (e) {
-          console.log("API not available, using sample data");
-          // Sample data fallback
-          setTranscripts([
-            { id: '1', name: 'transcript.txt', date: 'September 9, 2025' },
-            { id: '2', name: 'meeting-sept.txt', date: 'September 5, 2025' },
-            { id: '3', name: 'product-planning.txt', date: 'August 24, 2025' }
-          ]);
+          console.error("Error fetching from API:", e);
+          setError('Failed to load transcripts. API connection error.');
+          // Don't use sample data for production
+          setTranscripts([]);
         }
       } catch (err) {
         setError('Failed to load transcripts. Please try again.');
@@ -76,39 +74,21 @@ export default function TranscriptsPage() {
     setError(null);
     
     try {
-      // Try to use the API
-      try {
-        const result = await uploadTranscript(selectedFile);
-        if (result.success) {
-          // Refresh transcript list
-          const updatedTranscripts = await getTranscripts();
-          if (updatedTranscripts.length > 0) {
-            setTranscripts(updatedTranscripts);
-          }
-        } else {
-          throw new Error(result.message);
-        }
-      } catch (e) {
-        console.log("API not available, simulating upload");
-        // Simulate upload for development
-        await new Promise(resolve => setTimeout(resolve, 1500));
-        
-        // Add the file to our local transcripts array
-        const newTranscript = {
-          id: Math.random().toString(36).substring(2, 9),
-          name: selectedFile.name,
-          date: new Date().toLocaleDateString('en-US', { 
-            year: 'numeric', 
-            month: 'long', 
-            day: 'numeric' 
-          })
-        };
-        
-        setTranscripts(prev => [newTranscript, ...prev]);
-      }
+      console.log("Uploading transcript file:", selectedFile.name);
+      const result = await uploadTranscript(selectedFile);
       
-      // Reset selected file
-      setSelectedFile(null);
+      if (result.success) {
+        console.log("Upload successful");
+        // Refresh transcript list
+        const updatedTranscripts = await getTranscripts();
+        setTranscripts(updatedTranscripts);
+        
+        // Reset selected file
+        setSelectedFile(null);
+      } else {
+        console.error("Upload failed:", result.message);
+        throw new Error(result.message || 'Upload failed');
+      }
     } catch (err) {
       setError('Failed to upload file. Please try again.');
       console.error('Error uploading file:', err);
@@ -123,33 +103,47 @@ export default function TranscriptsPage() {
       return;
     }
     
+    // Check if the transcript has already been processed
+    const selectedTranscriptObj = transcripts.find(t => t.id === selectedTranscript);
+    if (selectedTranscriptObj?.processed && selectedTranscriptObj?.meetingDataId) {
+      // If already processed, redirect directly to the insights page
+      router.push(`/insights/${selectedTranscriptObj.meetingDataId}`);
+      return;
+    }
+    
     setIsProcessing(true);
+    setProcessingComplete(false);
     setError(null);
     
     try {
-      // Try to use the API
-      try {
-        const result = await generateInsights(selectedTranscript);
-        if (result.success && result.insightId) {
-          setProcessingComplete(true);
-          // Redirect to insights page after a short delay
-          setTimeout(() => {
-            router.push(`/insights/${result.insightId}`);
-          }, 1000);
+      console.log("Generating insights for transcript ID:", selectedTranscript);
+      const result = await generateInsights(selectedTranscript);
+      
+      if (result.success && result.meetingDataId) {
+        if (result.alreadyProcessed) {
+          console.log("Transcript was already processed. Redirecting to existing insights.");
         } else {
-          throw new Error(result.message);
+          console.log("Successfully generated new meeting data with ID:", result.meetingDataId);
         }
-      } catch (e) {
-        console.log("API not available, simulating insight generation");
-        // Simulate processing for development
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        
         setProcessingComplete(true);
         
-        // Generate a mock insight ID and redirect
-        const mockInsightId = `mock_${Math.random().toString(36).substring(2, 9)}`;
+        // Redirect to insights page after a short delay
         setTimeout(() => {
-          router.push(`/insights/${mockInsightId}`);
+          router.push(`/insights/${result.meetingDataId}`);
         }, 1000);
+        
+        // Update the transcripts list to reflect the processed status
+        setTranscripts(prevTranscripts => 
+          prevTranscripts.map(t => 
+            t.id === selectedTranscript 
+              ? {...t, processed: true, meetingDataId: result.meetingDataId} 
+              : t
+          )
+        );
+      } else {
+        console.error("Failed to generate insights:", result.message);
+        throw new Error(result.message || 'Failed to generate insights');
       }
     } catch (err) {
       setError('Failed to generate insights. Please try again.');
@@ -174,12 +168,6 @@ export default function TranscriptsPage() {
           </div>
           <nav className="ml-auto flex gap-4 sm:gap-6">
             <Link 
-              href="/dashboard" 
-              className="text-sm font-medium hover:underline underline-offset-4"
-            >
-              Dashboard
-            </Link>
-            <Link 
               href="/transcripts" 
               className="text-sm font-medium underline underline-offset-4 font-semibold"
             >
@@ -197,6 +185,17 @@ export default function TranscriptsPage() {
           </Link>
           <h1 className="text-3xl font-bold mt-4">Transcript Management</h1>
           <p className="text-neutral-500 mt-2">Upload a new transcript or browse existing ones</p>
+          
+          <div className="mt-4 bg-blue-50 border border-blue-200 text-blue-700 p-4 rounded-md">
+            <h3 className="font-medium">How it works:</h3>
+            <ul className="list-disc ml-5 mt-2 text-sm">
+              <li>Upload new transcript files using the form on the left</li>
+              <li>Select any transcript from the list to work with it</li>
+              <li>For <strong>new transcripts</strong>, you'll see a "Generate Meeting Insights" button</li>
+              <li>For <strong>already processed transcripts</strong>, you'll see a "View Existing Insights" button</li>
+              <li>Processed transcripts are marked with a green badge</li>
+            </ul>
+          </div>
         </div>
 
         {error && (
@@ -280,21 +279,30 @@ export default function TranscriptsPage() {
                       <div className="flex items-start">
                         <FileText className="h-5 w-5 text-neutral-400 mt-1 mr-3 flex-shrink-0" />
                         <div>
-                          <p className="font-medium">{transcript.name}</p>
+                          <p className="font-medium">
+                            {transcript.name}
+                            {transcript.processed && (
+                              <span className="ml-2 text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-md inline-block">
+                                Processed
+                              </span>
+                            )}
+                          </p>
                           <p className="text-sm text-neutral-500">{transcript.date}</p>
                         </div>
-                        <button 
-                          className={`ml-auto ${
-                            selectedTranscript === transcript.id 
-                              ? "bg-green-100 text-green-700" 
-                              : "bg-neutral-100 hover:bg-neutral-200 text-neutral-700"
-                          } text-xs px-3 py-1 rounded-md transition-colors`}
-                          onClick={() => setSelectedTranscript(transcript.id)}
-                        >
-                          {selectedTranscript === transcript.id ? (
-                            <><Check className="h-3 w-3 inline mr-1" /> Selected</>
-                          ) : 'Select'}
-                        </button>
+                        <div className="ml-auto flex gap-2">
+                          <button 
+                            className={`${
+                              selectedTranscript === transcript.id 
+                                ? "bg-green-100 text-green-700" 
+                                : "bg-neutral-100 hover:bg-neutral-200 text-neutral-700"
+                            } text-xs px-3 py-1 rounded-md transition-colors`}
+                            onClick={() => setSelectedTranscript(transcript.id)}
+                          >
+                            {selectedTranscript === transcript.id ? (
+                              <><Check className="h-3 w-3 inline mr-1" /> Selected</>
+                            ) : 'Select'}
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ))
@@ -304,31 +312,47 @@ export default function TranscriptsPage() {
           </div>
         </div>
 
-        {/* Generate Insights Button */}
+        {/* Action area - Show different options based on transcript processed status */}
         <div className="mt-8 flex justify-center">
-          <button
-            onClick={handleGenerateInsights}
-            disabled={!selectedTranscript || isProcessing}
-            className={`inline-flex h-12 items-center justify-center rounded-md px-8 text-sm font-medium shadow transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-neutral-950 disabled:opacity-50 ${
-              processingComplete
-                ? "bg-green-600 text-white hover:bg-green-700"
-                : "bg-neutral-900 text-neutral-50 hover:bg-neutral-900/90"
-            }`}
-          >
-            {isProcessing ? (
-              <><RefreshCw className="mr-2 h-5 w-5 animate-spin" /> Processing...</>
-            ) : processingComplete ? (
-              <>
-                <Check className="mr-2 h-5 w-5" />
-                Processing Complete
-              </>
-            ) : (
-              <>
-                <Play className="mr-2 h-5 w-5" />
-                Generate Meeting Insights
-              </>
-            )}
-          </button>
+          {selectedTranscript && (
+            <>
+              {/* Show View Insights button for processed transcripts */}
+              {transcripts.find(t => t.id === selectedTranscript)?.processed ? (
+                <Link 
+                  href={`/insights/${transcripts.find(t => t.id === selectedTranscript)?.meetingDataId}`}
+                  className="inline-flex h-12 items-center justify-center rounded-md px-8 text-sm font-medium shadow transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-neutral-950 bg-blue-600 text-white hover:bg-blue-700"
+                >
+                  <FileText className="mr-2 h-5 w-5" />
+                  View Existing Insights
+                </Link>
+              ) : (
+                /* Show Generate Insights button for unprocessed transcripts */
+                <button
+                  onClick={handleGenerateInsights}
+                  disabled={isProcessing}
+                  className={`inline-flex h-12 items-center justify-center rounded-md px-8 text-sm font-medium shadow transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-neutral-950 disabled:opacity-50 ${
+                    processingComplete
+                      ? "bg-green-600 text-white hover:bg-green-700"
+                      : "bg-neutral-900 text-neutral-50 hover:bg-neutral-900/90"
+                  }`}
+                >
+                  {isProcessing ? (
+                    <><RefreshCw className="mr-2 h-5 w-5 animate-spin" /> Processing...</>
+                  ) : processingComplete ? (
+                    <>
+                      <Check className="mr-2 h-5 w-5" />
+                      Processing Complete
+                    </>
+                  ) : (
+                    <>
+                      <Play className="mr-2 h-5 w-5" />
+                      Generate Meeting Insights
+                    </>
+                  )}
+                </button>
+              )}
+            </>
+          )}
         </div>
       </div>
 

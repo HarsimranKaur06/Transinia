@@ -1,10 +1,11 @@
 "use client";
 
 import Link from 'next/link';
-import { ArrowLeft, Users, Clock, FileText, CheckCircle, AlertCircle, RefreshCw, Download, Save } from 'lucide-react';
+import { ArrowLeft, Users, Clock, CheckCircle, AlertCircle, RefreshCw, Download, Save } from 'lucide-react';
 import { useState, useEffect } from 'react';
+import React from 'react';
 import { Insight, ActionItem } from '@/types';
-import { getInsight } from '@/lib/api';
+import { getInsight, updateActionItem } from '@/lib/api';
 
 // Sample insight data (will be replaced with API data in production)
 const sampleInsight: Insight = {
@@ -13,10 +14,12 @@ const sampleInsight: Insight = {
   date: 'September 10, 2025',
   summary: 'The team discussed the Q4 roadmap and prioritized features for the next release. Key decisions were made about resource allocation and timeline adjustments to accommodate the new security requirements.',
   actionItems: [
-    { id: '1', text: 'Update the project timeline document', assignee: 'Sarah', completed: true },
-    { id: '2', text: 'Schedule follow-up meeting with design team', assignee: 'Michael', completed: false },
-    { id: '3', text: 'Create detailed specs for the new authentication flow', assignee: 'David', completed: false },
-    { id: '4', text: 'Share meeting notes with stakeholders', completed: true }
+    { id: '1', text: 'Update the project timeline document', assignee: 'Sarah', completed: false, priority: 'high' },
+    { id: '2', text: 'Schedule follow-up meeting with design team', assignee: 'Michael', completed: false, priority: 'medium' },
+    { id: '3', text: 'Create detailed specs for the new authentication flow', assignee: 'David', completed: false, priority: 'high' },
+    { id: '4', text: 'Share meeting notes with stakeholders', assignee: 'Emma', completed: false, priority: 'low' },
+    { id: '11', text: 'File a ticket for missing 2FA on admin dashboard', assignee: 'Alex', completed: false, priority: 'high' },
+    { id: '14', text: 'Update security documentation for compliance review', assignee: 'Maria', completed: false, priority: 'medium' }
   ],
   keyPoints: [
     'Q4 roadmap will focus on security and performance improvements',
@@ -26,13 +29,18 @@ const sampleInsight: Insight = {
     'Integration with third-party payment processor to be completed in Q1 next year'
   ],
   participants: ['John Doe', 'Sarah Smith', 'Michael Johnson', 'David Lee', 'Emma Wilson'],
-  duration: '45 minutes'
+  duration: '45 minutes',
+  source: 'transcripts/sample-product-planning.txt'
 };
 
-export default function InsightPage({ params }: { params: { id: string } }) {
+export default function InsightPage({ params }: { params: { id: string } | Promise<{ id: string }> }) {
   const [insight, setInsight] = useState<Insight | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  
+  // Get the ID from params - safely handle both Promise and direct access
+  const insightId = 'then' in params ? React.use(params).id : params.id;
 
   useEffect(() => {
     async function loadInsight() {
@@ -41,21 +49,40 @@ export default function InsightPage({ params }: { params: { id: string } }) {
         
         // Try to fetch from the API
         try {
-          const result = await getInsight(params.id);
+          console.log("Attempting to fetch meeting data from API for ID:", insightId);
+          const result = await getInsight(insightId);
+          
           if (result.success && result.insight) {
+            console.log("Successfully loaded meeting data from API:", result.insight);
+            
+            // Debug - log the source field
+            if (result.insight.source) {
+              console.log("Insight source field:", result.insight.source);
+            } else {
+              console.warn("Insight is missing source field:", result.insight);
+            }
+            
             setInsight(result.insight);
           } else {
-            throw new Error(result.message || 'Failed to load insights');
+            console.error("API returned error:", result.message);
+            throw new Error(result.message || 'Failed to load meeting data');
           }
         } catch (e) {
-          console.log("API not available, using sample data");
-          // For development, use sample data
-          setTimeout(() => {
-            setInsight({
-              ...sampleInsight,
-              id: params.id
-            });
-          }, 1000);
+          console.error("Error loading from API:", e);
+          
+          // Only use sample data if the ID starts with "mock_"
+          if (insightId.startsWith('mock_')) {
+            console.log("Using sample data for mock ID");
+            setTimeout(() => {
+              setInsight({
+                ...sampleInsight,
+                id: insightId
+              });
+            }, 1000);
+          } else {
+            // For real IDs, show the error
+            setError('Failed to load meeting data. Please check your connection and try again.');
+          }
         }
       } catch (err) {
         setError('Failed to load meeting insights. Please try again.');
@@ -66,17 +93,12 @@ export default function InsightPage({ params }: { params: { id: string } }) {
     }
 
     loadInsight();
-  }, [params.id]);
+  }, [insightId]);
 
-  const toggleActionItem = (id: string) => {
-    if (!insight) return;
-    
-    setInsight({
-      ...insight,
-      actionItems: insight.actionItems.map(item => 
-        item.id === id ? { ...item, completed: !item.completed } : item
-      )
-    });
+  const toggleActionItem = async (id: string) => {
+    // We've removed the ability to toggle action items by clicking
+    // This function is kept for future reference but is now a no-op
+    return;
   };
   
   const downloadMinutes = () => {
@@ -131,6 +153,8 @@ export default function InsightPage({ params }: { params: { id: string } }) {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
+  
+
 
   if (isLoading) {
     return (
@@ -142,12 +166,6 @@ export default function InsightPage({ params }: { params: { id: string } }) {
               <Link href="/" className="text-2xl font-bold">Transinia</Link>
             </div>
             <nav className="ml-auto flex gap-4 sm:gap-6">
-              <Link 
-                href="/dashboard" 
-                className="text-sm font-medium hover:underline underline-offset-4"
-              >
-                Dashboard
-              </Link>
               <Link 
                 href="/transcripts" 
                 className="text-sm font-medium hover:underline underline-offset-4"
@@ -179,12 +197,6 @@ export default function InsightPage({ params }: { params: { id: string } }) {
               <Link href="/" className="text-2xl font-bold">Transinia</Link>
             </div>
             <nav className="ml-auto flex gap-4 sm:gap-6">
-              <Link 
-                href="/dashboard" 
-                className="text-sm font-medium hover:underline underline-offset-4"
-              >
-                Dashboard
-              </Link>
               <Link 
                 href="/transcripts" 
                 className="text-sm font-medium hover:underline underline-offset-4"
@@ -222,12 +234,6 @@ export default function InsightPage({ params }: { params: { id: string } }) {
           </div>
           <nav className="ml-auto flex gap-4 sm:gap-6">
             <Link 
-              href="/dashboard" 
-              className="text-sm font-medium hover:underline underline-offset-4"
-            >
-              Dashboard
-            </Link>
-            <Link 
               href="/transcripts" 
               className="text-sm font-medium hover:underline underline-offset-4"
             >
@@ -256,6 +262,22 @@ export default function InsightPage({ params }: { params: { id: string } }) {
             </div>
           </div>
         </div>
+
+        {/* Toast notification */}
+        {toast && (
+          <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-md shadow-md ${
+            toast.type === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+          }`}>
+            <div className="flex items-center">
+              {toast.type === 'success' ? (
+                <CheckCircle className="h-5 w-5 mr-2" />
+              ) : (
+                <AlertCircle className="h-5 w-5 mr-2" />
+              )}
+              <p>{toast.message}</p>
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* Summary Section */}
@@ -287,21 +309,32 @@ export default function InsightPage({ params }: { params: { id: string } }) {
               <ul className="space-y-3">
                 {insight.actionItems.map((item) => (
                   <li key={item.id} className="flex items-start">
-                    <button 
-                      onClick={() => toggleActionItem(item.id)} 
-                      className={`mr-3 mt-1 flex-shrink-0 h-5 w-5 rounded-full border flex items-center justify-center ${
-                        item.completed 
-                          ? 'bg-green-100 border-green-500 text-green-500' 
-                          : 'border-neutral-300'
-                      }`}
-                    >
-                      {item.completed && <CheckCircle className="h-4 w-4" />}
-                    </button>
+                    <div className="mr-3 mt-1 flex-shrink-0 h-5 w-5">
+                      <div className={`h-2 w-2 rounded-full ${item.completed ? 'bg-green-500' : 'bg-neutral-900'}`}></div>
+                    </div>
                     <div>
-                      <p className={`text-neutral-700 ${item.completed ? 'line-through text-neutral-400' : ''}`}>{item.text}</p>
-                      {item.assignee && (
-                        <p className="text-sm text-neutral-500 mt-1">Assigned to: {item.assignee}</p>
-                      )}
+                      <p className={`text-neutral-700 ${item.completed ? 'text-neutral-400' : ''}`}>{item.text}</p>
+                      <div className="flex flex-wrap gap-2 mt-2">
+                        {item.assignee && (
+                          <span className="text-sm text-neutral-500">Assigned to: {item.assignee}</span>
+                        )}
+                        {item.priority && (
+                          <span className={`text-xs px-2 py-1 rounded-md ${
+                            item.priority === 'high' 
+                              ? 'bg-red-100 text-red-700' 
+                              : item.priority === 'medium'
+                                ? 'bg-orange-100 text-orange-700'
+                                : 'bg-blue-100 text-blue-700'
+                          }`}>
+                            {item.priority.charAt(0).toUpperCase() + item.priority.slice(1)} Priority
+                          </span>
+                        )}
+                        {item.completed && (
+                          <span className="text-xs px-2 py-1 rounded-md bg-green-100 text-green-700">
+                            Completed
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </li>
                 ))}
@@ -320,20 +353,6 @@ export default function InsightPage({ params }: { params: { id: string } }) {
                   </li>
                 ))}
               </ul>
-            </div>
-            
-            <div className="bg-white p-6 rounded-lg border">
-              <h2 className="text-xl font-semibold mb-4">Original Transcript</h2>
-              <div className="flex items-center">
-                <FileText className="h-5 w-5 text-neutral-400 mr-2" />
-                <span className="text-neutral-700">transcript.txt</span>
-                <Link 
-                  href="#" 
-                  className="ml-auto text-sm text-blue-600 hover:text-blue-800 hover:underline"
-                >
-                  View
-                </Link>
-              </div>
             </div>
             
             <div className="bg-white p-6 rounded-lg border">

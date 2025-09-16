@@ -337,3 +337,19 @@ class DynamoDBService:
         except Exception as e:
             logger.error(f"Error updating task completion status: {e}")
             return False
+            
+    def list_meetings(self) -> List[Dict[str, Any]]:
+        """
+        List all meetings in the database.
+        Uses a scan operation with no filter to retrieve all meetings.
+        """
+        try:
+            response = self.meetings_table.scan()
+            if 'Items' in response:
+                meetings = response['Items']
+                logger.info(f"Found {len(meetings)} meetings")
+                return meetings
+            return []
+        except Exception as e:
+            logger.error(f"Error listing meetings: {e}")
+            return []
