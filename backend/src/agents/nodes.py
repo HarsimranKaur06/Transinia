@@ -16,10 +16,10 @@ from natural language text, then returns structured data for the next step.
 
 from datetime import date
 from typing import Dict, Any, List
-from src.models.schemas import MeetingState, Task
-from src.services.openai_service import chat_5_8_sentences
-from src.utils.json_utils import robust_json_parse
-from src.config.settings import logger
+from backend.src.models.schemas import MeetingState, Task
+from backend.src.services.openai_service import chat_5_8_sentences
+from backend.src.utils.json_utils import robust_json_parse
+from backend.src.config.settings import logger
 
 SYSTEM = "You convert meeting transcripts into structured outputs."
 

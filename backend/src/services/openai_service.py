@@ -17,7 +17,7 @@ the application.
 """
 
 from openai import OpenAI
-from src.config.settings import settings
+from backend.src.config.settings import settings
 
 _client = OpenAI(api_key=settings.openai_api_key)
 

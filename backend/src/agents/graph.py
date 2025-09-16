@@ -15,8 +15,8 @@ meeting transcripts through the complete analysis pipeline in the right order.
 """
 
 from langgraph.graph import StateGraph, END
-from src.models.schemas import MeetingState
-from src.agents.nodes import (
+from backend.src.models.schemas import MeetingState
+from backend.src.agents.nodes import (
     ingest_local_text, extract_title, extract_agenda, extract_decisions, 
     extract_participants, assign_tasks, draft_minutes
 )
@@ -34,7 +34,7 @@ def create_graph():
     graph.add_node("extract_title", extract_title)
     graph.add_node("extract_agenda", extract_agenda)
     graph.add_node("extract_decisions", extract_decisions)
-    from src.agents.nodes import extract_executive_summary
+    from backend.src.agents.nodes import extract_executive_summary
     graph.add_node("extract_executive_summary", extract_executive_summary)
     graph.add_node("extract_participants", extract_participants)
     graph.add_node("assign_tasks", assign_tasks)

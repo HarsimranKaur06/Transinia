@@ -19,7 +19,7 @@ needing to know AWS-specific implementation details.
 import os
 import boto3
 from botocore.exceptions import ClientError
-from src.config.settings import settings, logger
+from backend.src.config.settings import settings, logger
 
 class S3Service:
     def __init__(self):

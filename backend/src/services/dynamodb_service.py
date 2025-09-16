@@ -17,8 +17,8 @@ import boto3
 import uuid
 from datetime import datetime
 from typing import List, Dict, Any, Optional
-from src.config.settings import settings, logger
-from src.models.schemas import MeetingState, Task
+from backend.src.config.settings import settings, logger
+from backend.src.models.schemas import MeetingState, Task
 
 class DynamoDBService:
     """

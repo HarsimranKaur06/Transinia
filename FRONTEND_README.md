@@ -33,8 +33,8 @@ By default, the frontend uses mock data for development. To connect it to your a
 1. Ensure your Transinia backend is running (using Docker or directly)
 2. Update the `.env.local` file in the frontend directory with your backend URLs:
    ```
-   NEXT_PUBLIC_API_URL=http://localhost:8000/api
-   NEXT_PUBLIC_BACKEND_URL=http://localhost:8000
+   NEXT_PUBLIC_API_URL=http://localhost:8001/api
+   NEXT_PUBLIC_BACKEND_URL=http://localhost:8001
    NEXT_PUBLIC_S3_BUCKET_NAME=your-bucket-name
    ```
 3. Modify the API service files to use the actual endpoints

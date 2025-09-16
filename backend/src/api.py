@@ -5,9 +5,9 @@ This module provides a FastAPI server to expose the Transinia functionality
 as a REST API for the frontend to consume.
 """
 
-import os
 import uuid
 import json
+import os
 import tempfile
 from typing import List, Optional
 from datetime import datetime
@@ -15,10 +15,11 @@ from fastapi import FastAPI, UploadFile, File, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from src.agents.graph import create_graph
-from src.config.settings import settings, logger
-from src.models.schemas import MeetingState
-from src.repositories.storage_repo import StorageRepository
+from backend.src.agents.graph import create_graph
+from backend.src.config.settings import settings, logger
+from backend.src.models.schemas import MeetingState
+from backend.src.repositories.storage_repo import StorageRepository
+
 
 # Create FastAPI app
 app = FastAPI(title="Transinia API", 

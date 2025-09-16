@@ -22,20 +22,20 @@ import os
 from datetime import datetime
 from typing import List, Dict, Any, Optional, Union
 
-from src.utils.paths import MINUTES_MD, ACTIONS_JSON, get_output_dir
-from src.config.settings import settings, logger
-from src.models.schemas import MeetingState, Task
+from backend.src.utils.paths import MINUTES_MD, ACTIONS_JSON, get_output_dir
+from backend.src.config.settings import settings, logger
+from backend.src.models.schemas import MeetingState, Task
 
 # Import services with error handling
 try:
-    from src.services.s3_service import S3Service
+    from backend.src.services.s3_service import S3Service
     S3_AVAILABLE = True
 except ImportError:
     S3_AVAILABLE = False
     logger.warning("S3Service not available. S3 storage operations will be disabled.")
 
 try:
-    from src.services.dynamodb_service import DynamoDBService
+    from backend.src.services.dynamodb_service import DynamoDBService
     DYNAMODB_AVAILABLE = True
 except ImportError:
     DYNAMODB_AVAILABLE = False

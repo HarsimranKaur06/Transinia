@@ -1,0 +1,89 @@
+Meeting Transcript - Product Team Sync - June 15, 2025
+
+Sarah: Hi everyone, thanks for joining today. Let's get started with our weekly product sync. I see Alex, Priya, and Jordan are here. Looks like Miguel might be running a few minutes late.
+
+Alex: Hey all, I'm good to go.
+
+Priya: Morning, everyone.
+
+Jordan: Hi team, I'm here.
+
+Sarah: Great. So today we need to cover three main things - the onboarding flow redesign, that pricing update we've been talking about, and check where we are with the Q3 launch. Anything else we should add to the agenda?
+
+Alex: Maybe we can quickly touch on that security issue that came up yesterday?
+
+Sarah: Good call, let's add that. So let's start with the onboarding flow. Alex, you want to share your screen?
+
+Alex: Sure thing. So I've been working with the design team on simplifying our signup process. Right now we have these 5 steps which data shows is causing a lot of drop-off. We're proposing to condense it down to just 3 steps by combining the personal info and preferences screens, and making the team setup optional.
+
+Priya: That makes sense. Have we tested this with any users yet?
+
+Alex: Yes, we did some usability testing last week with 6 users and saw a 40% improvement in completion rates.
+
+Jordan: That's impressive. I'm all for simplifying this. Are there any downsides we're considering?
+
+Alex: The main tradeoff is we'll collect less preference data upfront, but I think we can gather that later when users are more invested.
+
+Sarah: I agree. Let's move forward with the 3-step flow. Can we aim to implement this by the end of the month?
+
+Alex: Yes, the engineering team already has it in their sprint planning.
+
+Sarah: Perfect. Next up, pricing updates. Priya, you've been leading this, right?
+
+Priya: Yes, I've analyzed the competitor pricing and our costs, and I'm proposing we adjust our tiers. For Starter, we'd go from $15 to $19 per month, and for Pro from $39 to $49 per month. Our Enterprise tier would stay the same at custom pricing.
+
+Jordan: That's quite a jump. What's the justification we're giving to customers?
+
+Priya: We're adding three new features to each tier that have been highly requested. Plus, we haven't changed pricing in 18 months while our costs have increased.
+
+Alex: When would this roll out?
+
+Priya: I'd like to announce it next month, giving current customers a 30-day notice. I'll need to update all the website copy and prepare the communication plan.
+
+Sarah: Sounds reasonable. Let's proceed with those changes. Jordan, can you work with Priya on the customer communication strategy?
+
+Jordan: Sure thing, I'll schedule time with Priya this week.
+
+Sarah: Great. Now, let's talk about the Q3 launch timeline. Jordan, where are we with this?
+
+Jordan: We're still on track for September 15th. The development team is hitting their milestones, and QA hasn't flagged any major issues yet. I've created a risk register to track potential delays, which I'm reviewing weekly.
+
+Sarah: That's good to hear. Are there any risks we should be aware of now?
+
+Jordan: The biggest one is the third-party integration with the payment processor. They're making some API changes in August that we need to adapt to.
+
+Alex: Do we need to allocate more engineering resources to that?
+
+Jordan: I don't think so yet, but I'm watching it closely. I'll own the risk register and keep everyone updated.
+
+Sarah: Perfect. Lastly, let's quickly discuss that security issue Alex mentioned. What's going on there?
+
+Alex: Our security audit found that we're missing two-factor authentication on the admin dashboard. It's not critical since it's behind our VPN, but it's still a gap we should address.
+
+Priya: How complicated would that be to implement?
+
+Alex: Not too bad. I can file a ticket today and we could probably get it done within two weeks.
+
+Sarah: Let's make that a priority. Can you aim to have it completed by next Friday?
+
+Alex: Yes, I'll file the ticket today and work with the security team.
+
+Miguel: [joins the call] Sorry I'm late everyone! Had another meeting run over.
+
+Sarah: No problem, Miguel. We're just wrapping up. We've covered the onboarding simplification, pricing changes, confirmed the Q3 launch date, and discussed adding 2FA to the admin dashboard.
+
+Miguel: Sounds like a productive meeting. Anything I need to take action on?
+
+Sarah: Not immediately, but Priya will be working on the pricing communication that will affect your team.
+
+Priya: Yes, I'll sync with you separately on that, Miguel.
+
+Sarah: Great work everyone. Let's reconvene next week at the same time. I'll send out the meeting notes later today.
+
+Jordan: Thanks, Sarah!
+
+Alex: Bye everyone.
+
+Priya: Talk to you all later.
+
+Miguel: Thanks team, bye!
