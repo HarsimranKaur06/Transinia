@@ -284,7 +284,7 @@ export default function InsightPage({ params }: { params: { id: string } | Promi
           <div className="lg:col-span-2">
             <div className="bg-white p-6 rounded-lg border mb-8">
               <h2 className="text-xl font-semibold mb-4">Meeting Summary</h2>
-              <p className="text-neutral-700 leading-relaxed">{insight.summary}</p>
+              <p className="text-neutral-700 leading-relaxed">{insight.executiveSummary || insight.summary}</p>
             </div>
 
             <div className="bg-white p-6 rounded-lg border">

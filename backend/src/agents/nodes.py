@@ -1,20 +1,3 @@
-from datetime import date
-from typing import Dict, Any, List
-from src.models.schemas import MeetingState, Task
-from src.services.openai_service import chat_5_8_sentences
-from src.utils.json_utils import robust_json_parse
-from src.config.settings import logger
-
-SYSTEM = "You convert meeting transcripts into structured outputs."
-
-def extract_executive_summary(state: MeetingState) -> Dict[str, Any]:
-    """Generate an executive summary for the meeting transcript using the LLM."""
-    user = f"""Write a concise executive summary (3-6 sentences) for this meeting. Focus on the main topics, key decisions, and overall outcome. Avoid listing agenda items or action items. Use clear, professional language for an executive audience.\n\nReturn ONLY the JSON: {{\"executive_summary\": \"...\"}}\n\nTranscript:\n{state.transcript[:5000]}\n"""
-    out = chat_5_8_sentences(SYSTEM, user, temperature=0.5)
-    data = robust_json_parse(out)
-    summary = data.get("executive_summary", "")
-    logger.info(f"Executive summary extracted: {summary}")
-    return {"executive_summary": summary}
 """
 AI PROCESSING FUNCTIONS FOR MEETING ANALYSIS
 -------------------------------------------
@@ -39,6 +22,15 @@ from src.utils.json_utils import robust_json_parse
 from src.config.settings import logger
 
 SYSTEM = "You convert meeting transcripts into structured outputs."
+
+def extract_executive_summary(state: MeetingState) -> Dict[str, Any]:
+    """Generate an executive summary for the meeting transcript using the LLM."""
+    user = f'''Write a concise executive summary (3-6 sentences) for this meeting. Focus on the main topics, key decisions, and overall outcome. Avoid listing agenda items or action items. Use clear, professional language for an executive audience.\n\nReturn ONLY the JSON: {{"executive_summary": "..."}}\n\nTranscript:\n{state.transcript[:5000]}\n'''
+    out = chat_5_8_sentences(SYSTEM, user, temperature=0.5)
+    data = robust_json_parse(out)
+    summary = data.get("executive_summary", "")
+    logger.info(f"Executive summary extracted: {summary}")
+    return {"executive_summary": summary}
 
 def ingest_local_text(state: MeetingState) -> Dict[str, Any]:
     if not state.transcript:
@@ -86,8 +78,15 @@ Transcript:
     
     # Apply final fallbacks and validation
     if not title or len(title.strip()) < 3:
-        # Use the first decision as the title
-        if state.decisions and len(state.decisions) > 0:
+        # Try to generate a title from agenda or decisions if available
+        if hasattr(state, 'agenda') and state.agenda:
+            # Use the first agenda item as the title
+            title = state.agenda[0]
+            # Truncate if needed
+            if len(title) > 40:
+                title = title[:37] + "..."
+        elif hasattr(state, 'decisions') and state.decisions:
+            # Use the first decision as the title
             title = f"Decision: {state.decisions[0]}"
             # Truncate if needed
             if len(title) > 40:

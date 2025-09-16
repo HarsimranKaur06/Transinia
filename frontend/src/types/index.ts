@@ -26,6 +26,7 @@ export interface Insight {
   title: string;
   date: string;
   summary: string;
+  executiveSummary?: string;
   actionItems: ActionItem[];
   keyPoints: string[];
   participants: string[];

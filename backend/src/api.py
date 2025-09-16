@@ -354,6 +354,7 @@ async def generate_meeting_data(request: MeetingDataRequest):
             "title": final_state.get("title") if hasattr(final_state, "get") and final_state.get("title") else f"Meeting Notes: {os.path.splitext(filename)[0]}",
             "date": datetime.now().strftime("%B %d, %Y"),
             "summary": minutes_md[:500] if len(minutes_md) > 500 else minutes_md,
+            "executiveSummary": final_state.get("executive_summary", "") if hasattr(final_state, "get") else "",
             "actionItems": [
                 {
                     "id": str(idx),
@@ -475,19 +476,38 @@ async def get_meeting_data(meeting_id: str):
         for decision in meeting.get("decisions", []):
             key_points.append(f"Decision: {decision}")
         
-        # Always return the full summary or full minutes_md, never truncate
-        summary = meeting.get("summary")
+        # Generate a concise summary if minutes_md is too long (over 800 words)
+        summary = meeting.get("summary", "")
         minutes_md = meeting.get("minutes_md", "")
-        if not summary:
-            summary = minutes_md
-
+        
+        if not summary and minutes_md:
+            # Count words in minutes_md
+            word_count = len(minutes_md.split())
+            
+            if word_count > 800:
+                # For long content, create a shorter summary using just the first sections
+                # This prevents truncation in the middle of a sentence
+                sections = minutes_md.split("##")
+                if len(sections) > 1:
+                    # Use the title and first section as summary
+                    summary = sections[0].strip()
+                    # Add the next section if it's the agenda
+                    if len(sections) > 1 and "agenda" in sections[1].lower():
+                        summary += "\n## " + sections[1].strip()
+                else:
+                    # If no sections, use the first 800 words
+                    words = minutes_md.split()
+                    summary = " ".join(words[:800])
+            else:
+                # For shorter content, use the full minutes
+                summary = minutes_md
+        
         # Create response object
         meeting_data = {
             "id": meeting.get("meeting_id", meeting_id),
             "title": title,
             "date": meeting.get("date", datetime.now().strftime("%B %d, %Y")),
-            "summary": summary,  # Always full content
-            "executiveSummary": meeting.get("executive_summary", ""),
+            "summary": summary,  # Use our carefully constructed summary
             "actionItems": action_items,
             "keyPoints": key_points,
             "participants": meeting.get("participants", []),
