@@ -1,20 +1,24 @@
+# Use lightweight Python 3.13 image
 FROM python:3.13-slim
 
+# Set working directory inside container
 WORKDIR /app
 
-# Copy requirements first to leverage Docker cache
+# Copy dependencies first to leverage Docker cache
 COPY requirements.txt .
 
-# Install dependencies
+# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy project files
+# Copy all project files
 COPY . .
 
-# Set environment variables
-ENV PYTHONPATH=/app
+# Environment variables
 ENV PYTHONUNBUFFERED=1
 
-# Default command - will use local mode by default
-# This can be overridden from docker-compose.yml or command line
-ENTRYPOINT ["python", "run_app.py"]
+# Expose FastAPI port
+EXPOSE 8001
+
+# Default: run FastAPI (so frontend can talk to it)
+ENTRYPOINT ["python", "-m", "uvicorn", "backend.src.api:app"]
+CMD ["--host", "0.0.0.0", "--port", "8001", "--workers", "1"]

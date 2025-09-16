@@ -45,6 +45,40 @@ venv.bak/
 .github/
 .aws/
 GITHUB_SETUP.md
+.env.example
+aws-credentials
+credentials.csv
 
-# We'll mount these at runtime, so no need to include them in the image
+# Frontend (node / build)
+frontend/node_modules/
+frontend/.next/
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/.vercel/
+
+# S3 demo outputs and local outputs
+meeting-bot-outputs/
+meeting-bot-transcripts/
 outputs/
+outputs/minutes.md
+outputs/actions.json
+
+# Docker
+.docker/
+docker-compose.override.yml
+
+# Terraform
+.terraform/
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!terraform.tfvars.example
+**/*.exe
+**/terraform-provider-*
+.terraform.lock.hcl
