@@ -1,12 +1,13 @@
-version: '3'
-
 services:
   meeting-bot:
     build: .
     container_name: meeting-bot
-    volumes:
-      - ./outputs:/app/outputs
+    ports:
+      - "8001:8001"                # Expose FastAPI on host port 8001
     env_file:
-      - .env
-    # Default command runs in local mode
-    # Override with: docker-compose run meeting-bot --source s3 --s3-key transcript.txt
+      - ./backend/.env             # Load environment variables from backend/.env
+    volumes:
+      - ./backend/transcripts:/app/transcripts   # Map transcripts folder
+      - ./backend/outputs:/app/outputs           # Map outputs folder
+    # Optional: map samples or other backend resources if needed
+    # - ./backend/samples:/app/samples

@@ -1,0 +1,10 @@
+# terraform.tfvars.example - Example values (DO NOT FILL WITH ACTUAL CREDENTIALS)
+# Rename to terraform.tfvars and fill with your actual values
+
+aws_region             = "us-east-1"
+aws_access_key_id      = "YOUR_ACCESS_KEY_ID"
+aws_secret_access_key  = "YOUR_SECRET_ACCESS_KEY"
+dynamodb_table_meetings = "meeting-bot-meetings"
+dynamodb_table_actions  = "meeting-bot-actions"
+environment            = "dev"
+project                = "Transinia"

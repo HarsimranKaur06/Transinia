@@ -18,6 +18,23 @@ var/
 wheels/
 *.egg-info/
 .installed.cfg
+
+# Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/.vercel/
+
+# Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/.env.local
 *.egg
 MANIFEST
 
@@ -69,3 +86,17 @@ docker-compose.override.yml
 **/*.exe
 **/terraform-provider-*
 .terraform.lock.hcl
+
+# frontend-files
+# Frontend specific ignores
+frontend/node_modules
+frontend/.next
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/.vercel
+
