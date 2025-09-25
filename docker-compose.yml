@@ -11,3 +11,15 @@ services:
       - ./backend/outputs:/app/outputs           # Map outputs folder
     # Optional: map samples or other backend resources if needed
     # - ./backend/samples:/app/samples
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # bake the container hostname of the backend into the build as a default
+        NEXT_PUBLIC_BACKEND_URL: "http://meeting-bot:8001"
+    ports:
+      - "3000:3000"
+    depends_on:
+      - meeting-bot
