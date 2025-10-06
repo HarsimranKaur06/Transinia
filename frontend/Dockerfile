@@ -1,39 +1,33 @@
-# Frontend Dockerfile - multi-stage build for Next.js production
-
-# Stage 1: builder
-FROM node:20-bullseye-slim AS builder
+# ---- Builder ----
+FROM node:20-bookworm-slim AS builder
 WORKDIR /app
 
-# Install dependencies
 COPY package*.json ./
 RUN npm ci --silent
 
-# Allow passing NEXT_PUBLIC_* envs at build time so Next.js can bake them into the build
+# Run npm audit to surface any production vulnerabilities in build logs (does not fail build)
+RUN npm audit --production --json > /tmp/npm_audit.json || true
+
 ARG NEXT_PUBLIC_BACKEND_URL
 ENV NEXT_PUBLIC_BACKEND_URL=${NEXT_PUBLIC_BACKEND_URL}
+ENV NEXT_TELEMETRY_DISABLED=1
 
-# Copy source and build
 COPY . .
 RUN npm run build
 
-# Stage 2: runtime
-FROM node:20-bullseye-slim AS runner
+# ---- Runner (distroless, non-root) ----
+FROM node:20-bookworm-slim AS runner
 WORKDIR /app
-ENV NODE_ENV=production
+ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=3000
 
-# Copy built assets and package.json for production deps
+# Create a non-root user to run the app
+RUN groupadd -r appgroup && useradd -r -g appgroup -d /home/appuser -s /sbin/nologin appuser && mkdir -p /home/appuser
 
-# Install only production dependencies
+# Copy standalone build output produced by Next
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
 
 EXPOSE 3000
-ENV PORT=3000
-
-# NEXT_PUBLIC_* env vars are baked at build time; to change backend URL you must rebuild
-# Use `--` so npm passes remaining args to the script (expects "start": "next start")
-COPY --from=builder /app/.next ./.next
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/package.json ./package.json
-
-RUN npm ci --production --silent
-
-CMD ["npm", "run", "start", "--", "-p", "${PORT}"]
+USER appuser
+CMD ["node", "server.js"]

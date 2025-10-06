@@ -1,0 +1,35 @@
+{
+  "family": "transinia-frontend-task",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "256",
+  "memory": "512",
+  "executionRoleArn": "${ECS_EXECUTION_ROLE_ARN}",
+  "taskRoleArn": "${ECS_TASK_ROLE_ARN}",
+  "containerDefinitions": [
+    {
+      "name": "frontend",
+      "image": "REPLACE_WITH_IMAGE",
+      "essential": true,
+      "portMappings": [ { "containerPort": 3000, "protocol": "tcp" } ],
+      "environment": [
+        { "name": "NEXT_PUBLIC_BACKEND_URL", "value": "${BACKEND_API_URL}" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/transinia-frontend",
+          "awslogs-region": "${AWS_REGION}",
+          "awslogs-stream-prefix": "ecs"
+        }
+      },
+      "healthCheck": {
+        "command": ["CMD-SHELL", "curl -f http://localhost:3000/ || exit 1"],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 10
+      }
+    }
+  ]
+}

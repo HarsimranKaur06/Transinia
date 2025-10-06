@@ -1,25 +1,37 @@
+version: "3.9"
+
 services:
   meeting-bot:
-    build: .
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
     container_name: meeting-bot
     ports:
-      - "8001:8001"                # Expose FastAPI on host port 8001
+      - "8001:8001"                  # FastAPI on host 8001
     env_file:
-      - ./backend/.env             # Load environment variables from backend/.env
+      - ./backend/.env               # local dev env only
     volumes:
-      - ./backend/transcripts:/app/transcripts   # Map transcripts folder
-      - ./backend/outputs:/app/outputs           # Map outputs folder
-    # Optional: map samples or other backend resources if needed
-    # - ./backend/samples:/app/samples
+      - ./backend/transcripts:/app/transcripts
+      - ./backend/outputs:/app/outputs
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8001/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        # bake the container hostname of the backend into the build as a default
+        # Docker default network DNS lets "meeting-bot" resolve to the backend container
         NEXT_PUBLIC_BACKEND_URL: "http://meeting-bot:8001"
     ports:
       - "3000:3000"
     depends_on:
-      - meeting-bot
+      meeting-bot:
+        condition: service_healthy
+    environment:
+      # optional: useful during local dev
+      PORT: "3000"
