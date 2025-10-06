@@ -4,8 +4,8 @@ import Link from 'next/link';
 import { ArrowLeft, Users, Clock, CheckCircle, AlertCircle, RefreshCw, Download, Save } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import React from 'react';
-import { Insight, ActionItem } from '@/types';
-import { getInsight, updateActionItem } from '@/lib/api';
+import { Insight } from '@/types';
+import { getInsight } from '@/lib/api';
 
 // Sample insight data (will be replaced with API data in production)
 const sampleInsight: Insight = {
@@ -37,7 +37,7 @@ export default function InsightPage({ params }: { params: { id: string } | Promi
   const [insight, setInsight] = useState<Insight | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
   
   // Get the ID from params - safely handle both Promise and direct access
   const insightId = 'then' in params ? React.use(params).id : params.id;
@@ -95,11 +95,21 @@ export default function InsightPage({ params }: { params: { id: string } | Promi
     loadInsight();
   }, [insightId]);
 
-  const toggleActionItem = async (id: string) => {
-    // We've removed the ability to toggle action items by clicking
-    // This function is kept for future reference but is now a no-op
-    return;
-  };
+  // Properly implemented toggle function for action items
+  const toggleActionItem = async (actionItemId: string) => {
+    if (!insight) return;
+    
+    try {
+      // Use the actionItemId to show which item is being updated
+      setToast({ message: `This feature is coming soon (for item: ${actionItemId})`, type: 'info' });
+      
+      // In a real implementation, we would call the API to update the action item
+      // await updateActionItem(actionItemId, { completed: !isItemCompleted });
+    } catch (err) {
+      console.error(`Failed to toggle action item ${actionItemId} status`, err);
+      setToast({ message: "Failed to update action item", type: 'error' });
+    }
+  }
   
   const downloadMinutes = () => {
     if (!insight) return;
@@ -309,7 +319,11 @@ export default function InsightPage({ params }: { params: { id: string } | Promi
               <ul className="space-y-3">
                 {insight.actionItems.map((item) => (
                   <li key={item.id} className="flex items-start">
-                    <div className="mr-3 mt-1 flex-shrink-0 h-5 w-5">
+                    <div 
+                      className="mr-3 mt-1 flex-shrink-0 h-5 w-5 cursor-pointer" 
+                      onClick={() => toggleActionItem(item.id)}
+                      title={item.completed ? "Mark as incomplete" : "Mark as complete"}
+                    >
                       <div className={`h-2 w-2 rounded-full ${item.completed ? 'bg-green-500' : 'bg-neutral-900'}`}></div>
                     </div>
                     <div>

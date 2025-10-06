@@ -191,8 +191,8 @@ export default function TranscriptsPage() {
             <ul className="list-disc ml-5 mt-2 text-sm">
               <li>Upload new transcript files using the form on the left</li>
               <li>Select any transcript from the list to work with it</li>
-              <li>For <strong>new transcripts</strong>, you'll see a "Generate Meeting Insights" button</li>
-              <li>For <strong>already processed transcripts</strong>, you'll see a "View Existing Insights" button</li>
+              <li>For <strong>new transcripts</strong>, you&apos;ll see a &quot;Generate Meeting Insights&quot; button</li>
+              <li>For <strong>already processed transcripts</strong>, you&apos;ll see a &quot;View Existing Insights&quot; button</li>
               <li>Processed transcripts are marked with a green badge</li>
             </ul>
           </div>
