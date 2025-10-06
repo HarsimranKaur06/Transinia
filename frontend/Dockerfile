@@ -8,13 +8,22 @@ RUN npm ci --silent
 # Run npm audit to surface any production vulnerabilities in build logs (does not fail build)
 RUN npm audit --production --json > /tmp/npm_audit.json || true
 
+# Create tsconfig.json first to ensure path aliases work properly
+COPY tsconfig.json ./
+
 ARG NEXT_PUBLIC_BACKEND_URL
 ARG NEXT_PUBLIC_API_URL
-ENV NEXT_PUBLIC_BACKEND_URL=${NEXT_PUBLIC_BACKEND_URL}
+ENV NEXT_PUBLIC_BACKEND_URL=${NEXT_PUBLIC_BACKEND_URL:-"http://localhost:8001"}
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-${NEXT_PUBLIC_BACKEND_URL}}
 ENV NEXT_TELEMETRY_DISABLED=1
 
 COPY . .
+
+# Debug info
+RUN echo "NEXT_PUBLIC_BACKEND_URL: $NEXT_PUBLIC_BACKEND_URL"
+RUN echo "NEXT_PUBLIC_API_URL: $NEXT_PUBLIC_API_URL"
+
+# Build with extra debugging to see why modules aren't found
 RUN npm run build
 
 # ---- Runner (distroless, non-root) ----
