@@ -58,6 +58,9 @@ jobs:
           file: ./frontend/Dockerfile
           push: true
           tags: ${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:latest
+          build-args: |
+            NEXT_PUBLIC_BACKEND_URL=${{ env.BACKEND_API_URL }}
+            NEXT_PUBLIC_API_URL=${{ env.BACKEND_API_URL }}
 
       - name: Prepare backend task definition
         run: |

@@ -13,7 +13,8 @@
       "essential": true,
       "portMappings": [ { "containerPort": 3000, "protocol": "tcp" } ],
       "environment": [
-        { "name": "NEXT_PUBLIC_BACKEND_URL", "value": "${BACKEND_API_URL}" }
+        { "name": "NEXT_PUBLIC_BACKEND_URL", "value": "${BACKEND_API_URL}" },
+        { "name": "NEXT_PUBLIC_API_URL", "value": "${BACKEND_API_URL}" }
       ],
       "logConfiguration": {
         "logDriver": "awslogs",
