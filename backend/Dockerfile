@@ -33,9 +33,15 @@ EXPOSE 8001
 # ENV UVICORN_LOOP=asyncio UVICORN_HTTP=h11
 
 # Start the API
-# Set PYTHONPATH to include the current directory as "backend"
-ENV PYTHONPATH=/app
+# Debug script for environment variables
+RUN echo '#!/bin/sh\necho "==== ENVIRONMENT VARIABLES ===="\nenv | sort\necho "==== PYTHON PATH CONTENTS ===="\nfind /app -type d | sort\necho "=============================="\nexec "$@"' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
+
+# Create a symlink to make the directory structure match the import structure
+RUN mkdir -p /backend && ln -sf /app /backend/src
+
+# Set PYTHONPATH to include both /app and parent directory for "backend" module
+ENV PYTHONPATH=/:$PYTHONPATH
 
 # Use the module path that matches the import statements in the code
-ENTRYPOINT ["python", "-m", "uvicorn", "backend.src.api:app"]
+ENTRYPOINT ["/app/entrypoint.sh", "python", "-m", "uvicorn", "backend.src.api:app"]
 CMD ["--host", "0.0.0.0", "--port", "8001", "--workers", "1"]
