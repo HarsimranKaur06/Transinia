@@ -11,10 +11,16 @@
       "name": "frontend",
       "image": "REPLACE_WITH_IMAGE",
       "essential": true,
-      "portMappings": [ { "containerPort": 3000, "protocol": "tcp" } ],
+      "portMappings": [
+        { "containerPort": 3000, "protocol": "tcp" }
+      ],
       "environment": [
         { "name": "NEXT_PUBLIC_BACKEND_URL", "value": "${BACKEND_API_URL}" },
-        { "name": "NEXT_PUBLIC_API_URL", "value": "${BACKEND_API_URL}" }
+        { "name": "NEXT_PUBLIC_API_URL", "value": "${BACKEND_API_URL}" },
+        { "name": "HOSTNAME", "value": "0.0.0.0" },
+        { "name": "HOST", "value": "0.0.0.0" },
+        { "name": "PORT", "value": "3000" },
+        { "name": "NEXT_TELEMETRY_DISABLED", "value": "1" }
       ],
       "logConfiguration": {
         "logDriver": "awslogs",
