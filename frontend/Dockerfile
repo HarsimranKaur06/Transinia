@@ -49,5 +49,7 @@ RUN chown -R appuser:appgroup /app
 
 EXPOSE 3000
 USER appuser
-# Simple direct command for debugging
-CMD ["sh", "-c", "ls -la /app && echo 'ENV VARS:' && env | sort && node server.js"]
+# Set explicit hostname binding to prevent hostname resolution issues
+ENV HOST=0.0.0.0
+# Simple direct command for debugging with explicit hostname binding
+CMD ["sh", "-c", "ls -la /app && echo 'ENV VARS:' && env | sort && echo 'Starting server on 0.0.0.0:3000...' && node server.js"]
