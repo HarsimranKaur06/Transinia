@@ -33,15 +33,15 @@ EXPOSE 8001
 # ENV UVICORN_LOOP=asyncio UVICORN_HTTP=h11
 
 # Start the API
-# Debug script for environment variables
-RUN echo '#!/bin/sh\necho "==== ENVIRONMENT VARIABLES ===="\nenv | sort\necho "==== PYTHON PATH CONTENTS ===="\nfind /app -type d | sort\necho "=============================="\nexec "$@"' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
+# Debug script for environment variables and fix imports
+RUN echo '#!/bin/sh\necho "==== ENVIRONMENT VARIABLES ===="\nenv | sort\necho "==== PYTHON PATH CONTENTS ===="\nfind /app -name "*.py" | sort\necho "=============================="\n\n# Fix imports by creating directory structure\nmkdir -p /backend\ncp -r /app /backend/src\nls -la /backend/src\n\n# Execute command\nexec "$@"' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
-# Create a symlink to make the directory structure match the import structure
-RUN mkdir -p /backend && ln -sf /app /backend/src
+# Create necessary __init__.py files if they don't exist
+RUN touch /app/__init__.py
 
-# Set PYTHONPATH to include both /app and parent directory for "backend" module
+# Set PYTHONPATH to include both the app directory and root
 ENV PYTHONPATH=/:$PYTHONPATH
 
-# Use the module path that matches the import statements in the code
-ENTRYPOINT ["/app/entrypoint.sh", "python", "-m", "uvicorn", "backend.src.api:app"]
+# Modify ENTRYPOINT to use src.api directly instead of backend.src.api
+ENTRYPOINT ["/app/entrypoint.sh", "python", "-m", "uvicorn", "src.api:app"]
 CMD ["--host", "0.0.0.0", "--port", "8001", "--workers", "1"]
