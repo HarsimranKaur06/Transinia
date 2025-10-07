@@ -44,11 +44,10 @@ COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
 
-# Add startup script to print environment variables
-RUN echo '#!/bin/sh\necho "==== ENVIRONMENT VARIABLES ===="\nenv | sort\necho "=============================="\nexec "$@"' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh \
-    && chown -R appuser:appgroup /app/entrypoint.sh
+# Simplify the startup - no scripts needed
+RUN chown -R appuser:appgroup /app
 
 EXPOSE 3000
 USER appuser
-ENTRYPOINT ["/app/entrypoint.sh"]
-CMD ["node", "server.js"]
+# Simple direct command for debugging
+CMD ["sh", "-c", "ls -la /app && echo 'ENV VARS:' && env | sort && node server.js"]
