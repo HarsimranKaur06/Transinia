@@ -28,8 +28,8 @@ RUN echo "NEXT_PUBLIC_API_URL: $NEXT_PUBLIC_API_URL"
 RUN cat tsconfig.json
 RUN cat next.config.js
 
-# Run Next.js build with verbose output to help troubleshoot module resolution issues
-RUN NODE_OPTIONS=--verbose npm run build
+# Run Next.js build with npm's verbose flag for additional logging
+RUN npm run build --verbose
 
 # ---- Runner (distroless, non-root) ----
 FROM node:20-alpine AS runner
