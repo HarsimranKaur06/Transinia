@@ -35,6 +35,9 @@ RUN npm run build
 FROM node:20-alpine AS runner
 WORKDIR /app
 
+# Install curl for ECS health checks
+RUN apk add --no-cache curl
+
 # Ensure production mode and explicit bind/port
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
