@@ -45,9 +45,10 @@ COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
 
 # Add startup script to print environment variables
-RUN echo '#!/bin/sh\necho "==== ENVIRONMENT VARIABLES ===="\nenv | sort\necho "=============================="\nexec "$@"' > /app/docker-entrypoint.sh && chmod +x /app/docker-entrypoint.sh
+RUN echo '#!/bin/sh\necho "==== ENVIRONMENT VARIABLES ===="\nenv | sort\necho "=============================="\nexec "$@"' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh \
+    && chown -R appuser:appgroup /app/entrypoint.sh
 
 EXPOSE 3000
 USER appuser
-ENTRYPOINT ["/app/docker-entrypoint.sh"]
+ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["node", "server.js"]
