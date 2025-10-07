@@ -1,15 +1,15 @@
 # ---- Builder ----
-FROM node:20-bookworm-slim AS builder
+FROM node:20-alpine AS builder
 WORKDIR /app
 
 COPY package*.json ./
+COPY tsconfig.json ./
+COPY jsconfig.json ./
+COPY next.config.js ./
 RUN npm ci --silent
 
 # Run npm audit to surface any production vulnerabilities in build logs (does not fail build)
 RUN npm audit --production --json > /tmp/npm_audit.json || true
-
-# Create tsconfig.json first to ensure path aliases work properly
-COPY tsconfig.json ./
 
 ARG NEXT_PUBLIC_BACKEND_URL
 ARG NEXT_PUBLIC_API_URL
@@ -17,22 +17,27 @@ ENV NEXT_PUBLIC_BACKEND_URL=${NEXT_PUBLIC_BACKEND_URL:-"http://localhost:8001"}
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-${NEXT_PUBLIC_BACKEND_URL}}
 ENV NEXT_TELEMETRY_DISABLED=1
 
+# Copy source files
 COPY . .
 
 # Debug info
 RUN echo "NEXT_PUBLIC_BACKEND_URL: $NEXT_PUBLIC_BACKEND_URL"
 RUN echo "NEXT_PUBLIC_API_URL: $NEXT_PUBLIC_API_URL"
 
-# Build with extra debugging to see why modules aren't found
-RUN npm run build
+# Verify that the path alias configuration is in place
+RUN cat tsconfig.json
+RUN cat next.config.js
+
+# Run Next.js build with verbose output to help troubleshoot module resolution issues
+RUN NODE_OPTIONS=--verbose npm run build
 
 # ---- Runner (distroless, non-root) ----
-FROM node:20-bookworm-slim AS runner
+FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=3000
 
-# Create a non-root user to run the app
-RUN groupadd -r appgroup && useradd -r -g appgroup -d /home/appuser -s /sbin/nologin appuser && mkdir -p /home/appuser
+# Create a non-root user to run the app (Alpine version)
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup -h /home/appuser && mkdir -p /home/appuser
 
 # Copy standalone build output produced by Next
 COPY --from=builder /app/.next/standalone ./
