@@ -19,6 +19,30 @@ resource "aws_iam_role_policy_attachment" "ecs_task_exec_attach" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
+# Add explicit CloudWatch Logs permissions for the ECS task execution role
+resource "aws_iam_role_policy" "ecs_cloudwatch_logs" {
+  name = "${local.app}-${local.env}-cloudwatch-logs-policy"
+  role = aws_iam_role.ecs_task_execution.id
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect = "Allow",
+        Action = [
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+          "logs:DescribeLogStreams"
+        ],
+        Resource = [
+          "arn:aws:logs:${var.aws_region}:*:log-group:/ecs/${local.app}-${local.env}-backend:*",
+          "arn:aws:logs:${var.aws_region}:*:log-group:/ecs/${local.app}-${local.env}-frontend:*"
+        ]
+      }
+    ]
+  })
+}
+
 # Task role (app permissions)
 resource "aws_iam_role" "ecs_task_role" {
   name               = "${local.app}-${local.env}-ecsTaskRole"

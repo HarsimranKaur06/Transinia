@@ -21,6 +21,8 @@ jobs:
     permissions:
       contents: 'read'
       id-token: 'write'
+    # Add always() to ensure cleanup runs even if job fails
+    if: always()
 
     steps:
       - name: Check out repository
@@ -64,6 +66,14 @@ jobs:
           build-args: |
             NEXT_PUBLIC_BACKEND_URL=${{ env.BACKEND_API_URL }}
             NEXT_PUBLIC_API_URL=${{ env.BACKEND_API_URL }}
+
+      - name: Create CloudWatch Log Groups
+        run: |
+          echo "Creating CloudWatch Log Groups..."
+          # Create log groups with explicit paths and region
+          aws logs create-log-group --log-group-name "/ecs/transinia-dev-backend" --region ${{ env.AWS_REGION }} || true
+          aws logs create-log-group --log-group-name "/ecs/transinia-dev-frontend" --region ${{ env.AWS_REGION }} || true
+          echo "Log groups created or already exist"
 
       - name: Prepare backend task definition
         run: |
@@ -118,3 +128,21 @@ jobs:
           service: ${{ env.FRONTEND_SERVICE }}
           cluster: ${{ env.CLUSTER_NAME }}
           wait-for-service-stability: true
+          
+      # Cleanup step - always runs even if prior steps fail
+      - name: Cleanup
+        if: always()
+        run: |
+          echo "Performing cleanup operations..."
+          # Double check the log groups exist
+          aws logs create-log-group --log-group-name "/ecs/transinia-dev-backend" --region ${{ env.AWS_REGION }} || true
+          aws logs create-log-group --log-group-name "/ecs/transinia-dev-frontend" --region ${{ env.AWS_REGION }} || true
+          
+          # Check for any failed tasks and stop them
+          FAILED_TASKS=$(aws ecs list-tasks --cluster ${{ env.CLUSTER_NAME }} --desired-status STOPPED --query 'taskArns[*]' --output text || echo "")
+          if [[ ! -z "$FAILED_TASKS" ]]; then
+            echo "Cleaning up failed tasks: $FAILED_TASKS"
+            for TASK in $FAILED_TASKS; do
+              aws ecs stop-task --cluster ${{ env.CLUSTER_NAME }} --task $TASK --region ${{ env.AWS_REGION }} || true
+            done
+          fi
