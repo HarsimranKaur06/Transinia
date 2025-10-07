@@ -38,6 +38,12 @@ app.add_middleware(
 # Create storage repository
 storage_repo = StorageRepository()
 
+# Health check endpoint
+@app.get("/health")
+def health_check():
+    """Health check endpoint for ECS container health checks"""
+    return {"status": "ok", "timestamp": datetime.now().isoformat()}
+
 # Define API models
 class TranscriptResponse(BaseModel):
     id: str

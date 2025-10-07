@@ -33,5 +33,9 @@ EXPOSE 8001
 # ENV UVICORN_LOOP=asyncio UVICORN_HTTP=h11
 
 # Start the API
+# Set PYTHONPATH to include the current directory as "backend"
+ENV PYTHONPATH=/app
+
+# Use the module path that matches the import statements in the code
 ENTRYPOINT ["python", "-m", "uvicorn", "backend.src.api:app"]
 CMD ["--host", "0.0.0.0", "--port", "8001", "--workers", "1"]

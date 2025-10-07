@@ -22,11 +22,11 @@ import sys
 from datetime import datetime
 from typing import Dict, List, Any, Union
 
-from backend.src.agents.graph import create_graph
-from backend.src.config.settings import settings, logger
-from backend.src.models.schemas import MeetingState, Task
-from backend.src.repositories.storage_repo import StorageRepository
-from backend.src.utils.paths import TRANSCRIPT_TXT
+from src.agents.graph import create_graph
+from src.config.settings import settings, logger
+from src.models.schemas import MeetingState, Task
+from src.repositories.storage_repo import StorageRepository
+from src.utils.paths import TRANSCRIPT_TXT
 
 
 def main():
