@@ -48,8 +48,22 @@ COPY --from=builder /app/public ./public
 RUN chown -R appuser:appgroup /app
 
 EXPOSE 3000
+
+# Create a script to patch server.js before running it
+RUN echo '#!/bin/sh' > /app/start.sh && \
+    echo '# Patch server.js to force hostname binding to 0.0.0.0' >> /app/start.sh && \
+    echo 'sed -i "s/server.listen(port, hostname)/server.listen(port, \"0.0.0.0\")/" /app/server.js' >> /app/start.sh && \
+    echo 'sed -i "s/await app.prepare()/await app.prepare(); console.log(\"Next.js server binding to 0.0.0.0:\"+port)/" /app/server.js' >> /app/start.sh && \
+    echo 'echo "Server file patched to force 0.0.0.0 binding"' >> /app/start.sh && \
+    echo '' >> /app/start.sh && \
+    echo '# Start the server' >> /app/start.sh && \
+    echo 'ls -la /app' >> /app/start.sh && \
+    echo 'echo "ENV VARS:"' >> /app/start.sh && \
+    echo 'env | sort' >> /app/start.sh && \
+    echo 'echo "Starting server on 0.0.0.0:3000..."' >> /app/start.sh && \
+    echo 'exec node server.js' >> /app/start.sh && \
+    chmod +x /app/start.sh && \
+    chown appuser:appgroup /app/start.sh
+
 USER appuser
-# Set explicit hostname binding to prevent hostname resolution issues
-ENV HOST=0.0.0.0
-# Simple direct command for debugging with explicit hostname binding
-CMD ["sh", "-c", "ls -la /app && echo 'ENV VARS:' && env | sort && echo 'Starting server on 0.0.0.0:3000...' && node server.js"]
+CMD ["/app/start.sh"]
