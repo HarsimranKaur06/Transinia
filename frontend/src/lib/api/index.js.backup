@@ -1,0 +1,498 @@
+/**
+ * API service for connecting to the Transinia backend
+ * This file provides functions to interact with the backend services
+ */
+
+// Base URL for API calls, from environment variables
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api';
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8001';
+const S3_BUCKET_NAME = process.env.NEXT_PUBLIC_S3_BUCKET_NAME || 'transinia-transcripts';
+
+/**
+ * Fetch the list of available transcripts
+ */
+export async function getTranscripts() {
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/transcripts/list`);
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error('Error fetching transcripts:', error);
+    // Fallback to mock data if backend is not available
+    return [
+      { 
+        id: 'transcript.txt', 
+        name: 'transcript.txt', 
+        date: 'September 9, 2025',
+        size: 1024,
+        source: 's3'
+      },
+      { 
+        id: 'meeting-sept.txt', 
+        name: 'meeting-sept.txt', 
+        date: 'September 5, 2025',
+        size: 2048,
+        source: 's3'
+      },
+      { 
+        id: 'product-planning.txt', 
+        name: 'product-planning.txt', 
+        date: 'August 24, 2025',
+        size: 3072,
+        source: 's3'
+      }
+    ];
+  }
+}
+
+/**
+ * Upload a transcript file to the backend
+ */
+export async function uploadTranscript(file) {
+  try {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await fetch(`${BACKEND_URL}/api/transcripts/upload`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('Error uploading transcript:', error);
+    // Fallback to mock response
+    return {
+      success: true,
+      message: 'File uploaded successfully (mock)',
+      fileId: `${Math.random().toString(36).substring(2, 9)}`,
+    };
+  }
+}
+
+/**
+ * Generate meeting insights from a transcript
+ */
+export async function generateInsights(transcriptId) {
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/insights/generate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ transcriptId }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('Error generating insights:', error);
+    // Fallback to mock response
+    await new Promise(resolve => setTimeout(resolve, 2000)); // Simulate processing time
+    return {
+      success: true,
+      message: 'Meeting insights generated successfully (mock)',
+      insightId: `mock_${Math.random().toString(36).substring(2, 9)}`
+    };
+  }
+}
+
+/**
+ * Get insight by ID
+ */
+export async function getInsight(insightId) {
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/insights/${insightId}`);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    return await response.json();
+  } catch (error) {
+    console.error('Error fetching insight:', error);
+    // Fallback to mock data
+    
+    // Mock data for different meetings
+    const meetingData = {
+      // Product Planning Meeting
+      '183d5ed3-5621-471b-b1d5-6ecce54a517e': {
+        title: 'Product Planning Meeting',
+        date: 'September 10, 2025',
+        summary: 'The team discussed the Q4 roadmap and prioritized features for the next release. Key decisions were made about resource allocation and timeline adjustments to accommodate the new security requirements.',
+        actionItems: [
+          { id: '1', text: 'Update the project timeline document', assignee: 'Sarah', completed: false, priority: 'high' },
+          { id: '2', text: 'Schedule follow-up meeting with design team', assignee: 'Michael', completed: false, priority: 'medium' },
+          { id: '3', text: 'Create detailed specs for the new authentication flow', assignee: 'David', completed: false, priority: 'high' },
+          { id: '4', text: 'Share meeting notes with stakeholders', assignee: 'Emma', completed: false, priority: 'low' },
+          { id: '11', text: 'File a ticket for missing 2FA on admin dashboard', assignee: 'Alex', completed: false, priority: 'high' },
+          { id: '14', text: 'Update security documentation for compliance review', assignee: 'Maria', completed: false, priority: 'medium' }
+        ],
+        keyPoints: [
+          'Q4 roadmap will focus on security and performance improvements',
+          'New authentication system to be implemented by end of November',
+          'Customer feedback highlighted need for improved dashboard analytics',
+          'Budget approval for additional QA resources confirmed',
+          'Integration with third-party payment processor to be completed in Q1 next year'
+        ],
+        participants: ['John Doe', 'Sarah Smith', 'Michael Johnson', 'David Lee', 'Emma Wilson', 'Alex Rodriguez', 'Maria Chen'],
+        duration: '45 minutes',
+        source: 'transcript.txt'
+      },
+      // Weekly Status Update
+      'ede4de4b-b3a2-41de-8844-fc2e619c78b4': {
+        title: 'Weekly Status Update',
+        date: 'September 8, 2025',
+        summary: 'Team members provided updates on their current projects. Several blockers were identified and addressed. New priorities were established for the upcoming sprint.',
+        actionItems: [
+          { id: '5', text: 'Follow up with IT about deployment permissions', assignee: 'John', completed: false, priority: 'medium' },
+          { id: '6', text: 'Share Q3 metrics with leadership team', assignee: 'Rebecca', completed: false, priority: 'medium' },
+          { id: '7', text: 'Schedule one-on-ones with team members', assignee: 'Lisa', completed: false, priority: 'low' },
+          { id: '12', text: 'Update website copy with new pricing', assignee: 'Priya', completed: false, priority: 'high' }
+        ],
+        keyPoints: [
+          'Frontend team is ahead of schedule on the new dashboard features',
+          'API integration with payment processor is experiencing delays',
+          'QA found 3 critical bugs that need to be addressed before release',
+          'New hire onboarding needs to be expedited'
+        ],
+        participants: ['John Smith', 'Rebecca Jones', 'Lisa Patel', 'Priya Sharma', 'Mark Thompson'],
+        duration: '30 minutes',
+        source: 'meeting-sept.txt'
+      },
+      // Design Review
+      '13fc322d-5579-48e8-89db-289088f4dc2c': {
+        title: 'Design Review',
+        date: 'September 7, 2025',
+        summary: 'The design team presented the new UI mockups for the mobile app. The team provided feedback on accessibility and usability concerns. Several iterations will be needed before final approval.',
+        actionItems: [
+          { id: '8', text: 'Update mobile mockups with accessibility improvements', assignee: 'Jin', completed: false, priority: 'medium' },
+          { id: '9', text: 'Research competitor approaches to similar features', assignee: 'Olivia', completed: false, priority: 'low' },
+          { id: '10', text: 'Schedule user testing for the new designs', assignee: 'Raj', completed: false, priority: 'medium' },
+          { id: '13', text: 'Own risk register for Q3 launch', assignee: 'Jordan', completed: false, priority: 'high' },
+          { id: '15', text: 'Schedule user testing sessions for new features', assignee: 'Chris', completed: false, priority: 'high' }
+        ],
+        keyPoints: [
+          'New color scheme was well-received but needs minor adjustments',
+          'Navigation flow requires simplification on smaller screens',
+          'Accessibility for color-blind users needs improvement',
+          'Performance on older devices is a concern'
+        ],
+        participants: ['Jin Lee', 'Olivia Garcia', 'Raj Patel', 'Jordan Wilson', 'Chris Martinez'],
+        duration: '60 minutes',
+        source: 'design-review.txt'
+      }
+    };
+
+    // Get the meeting data based on the provided ID, or use default data if not found
+    const meeting = meetingData[insightId] || {
+      title: 'Unknown Meeting',
+      date: 'September 10, 2025',
+      summary: 'No summary available for this meeting.',
+      actionItems: [],
+      keyPoints: ['No key points available'],
+      participants: ['Unknown participants'],
+      duration: 'Unknown duration',
+      source: 'unknown.txt'
+    };
+
+    // Mock successful insight fetch
+    return {
+      success: true,
+      message: 'Insight retrieved successfully',
+      insight: {
+        id: insightId,
+        ...meeting
+      }
+    };
+  } catch (error) {
+    console.error('Error fetching insight:', error);
+    return {
+      success: false,
+      message: error.message || 'Failed to fetch insight',
+    };
+  }
+}
+
+/**
+ * Get all meetings from the backend (for dashboard)
+ */
+export async function getMeetings() {
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/insights/list`);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    return await response.json();
+  } catch (error) {
+    console.error('Error fetching meetings:', error);
+    // Fallback to mock data
+    return [
+      {
+        id: '183d5ed3-5621-471b-b1d5-6ecce54a517e',
+        title: 'Product Planning Meeting',
+        date: 'September 9, 2025',
+        participants: ['John', 'Sarah', 'Michael', 'David', 'Emma', 'Alex', 'Maria'],
+        keyPoints: 5,
+        actionItems: 6,
+        duration: '45 minutes'
+      },
+      {
+        id: 'ede4de4b-b3a2-41de-8844-fc2e619c78b4',
+        title: 'Weekly Status Update',
+        date: 'September 5, 2025',
+        participants: ['John', 'Rebecca', 'Lisa', 'Priya', 'Mark'],
+        keyPoints: 4,
+        actionItems: 4,
+        duration: '30 minutes'
+      },
+      {
+        id: '13fc322d-5579-48e8-89db-289088f4dc2c',
+        title: 'Design Review',
+        date: 'August 24, 2025',
+        participants: ['Jin', 'Olivia', 'Raj', 'Jordan', 'Chris'],
+        keyPoints: 4,
+        actionItems: 5,
+        duration: '60 minutes'
+      }
+    ];
+  }
+}
+    return [
+      {
+        id: '183d5ed3-5621-471b-b1d5-6ecce54a517e',
+        title: 'Product Planning Meeting',
+        date: 'September 9, 2025',
+        participants: ['John', 'Sarah', 'Michael', 'David', 'Emma', 'Alex', 'Maria'],
+        keyPoints: 5,
+        actionItems: 6,
+        duration: '45 minutes'
+      },
+      {
+        id: 'ede4de4b-b3a2-41de-8844-fc2e619c78b4',
+        title: 'Weekly Status Update',
+        date: 'September 5, 2025',
+        participants: ['John', 'Rebecca', 'Lisa', 'Priya', 'Mark'],
+        keyPoints: 4,
+        actionItems: 4,
+        duration: '30 minutes'
+      },
+      {
+        id: '13fc322d-5579-48e8-89db-289088f4dc2c',
+        title: 'Design Review',
+        date: 'August 24, 2025',
+        participants: ['Jin', 'Olivia', 'Raj', 'Jordan', 'Chris'],
+        keyPoints: 4,
+        actionItems: 5,
+        duration: '60 minutes'
+      }
+    ];
+  }
+}
+
+/**
+ * Get high priority action items
+ */
+export async function getHighPriorityTasks() {
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/actions/high-priority`);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    return await response.json();
+  } catch (error) {
+    console.error('Error fetching high priority tasks:', error);
+    // Fallback to mock data
+    return [
+      {
+        id: '1',
+        text: 'Update the project timeline document',
+        assignee: 'Sarah',
+        completed: false,
+        priority: 'high',
+        meetingId: '183d5ed3-5621-471b-b1d5-6ecce54a517e',
+        meetingTitle: 'Product Planning Meeting'
+      },
+      {
+        id: '3',
+        text: 'Create detailed specs for the new authentication flow',
+        assignee: 'David',
+        completed: false,
+        priority: 'high',
+        meetingId: '183d5ed3-5621-471b-b1d5-6ecce54a517e',
+        meetingTitle: 'Product Planning Meeting'
+      },
+      {
+        id: '11',
+        text: 'File a ticket for missing 2FA on admin dashboard',
+        assignee: 'Alex',
+        completed: false,
+        priority: 'high',
+        meetingId: '183d5ed3-5621-471b-b1d5-6ecce54a517e',
+        meetingTitle: 'Product Planning Meeting'
+      },
+      {
+        id: '12',
+        text: 'Update website copy with new pricing',
+        assignee: 'Priya',
+        completed: false,
+        priority: 'high',
+        meetingId: 'ede4de4b-b3a2-41de-8844-fc2e619c78b4',
+        meetingTitle: 'Weekly Status Update'
+      },
+      {
+        id: '13',
+        text: 'Own risk register for Q3 launch',
+        assignee: 'Jordan',
+        completed: false,
+        priority: 'high',
+        meetingId: '13fc322d-5579-48e8-89db-289088f4dc2c',
+        meetingTitle: 'Design Review'
+      },
+      {
+        id: '15',
+        text: 'Schedule user testing sessions for new features',
+        assignee: 'Chris',
+        completed: false,
+        priority: 'high',
+        meetingId: '13fc322d-5579-48e8-89db-289088f4dc2c',
+        meetingTitle: 'Design Review'
+      }
+    ];
+  }
+}
+
+/**
+ * Update an action item's completion status
+ */
+export async function updateActionItem(insightId, actionItemId, completed) {
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/insights/${insightId}/actions/${actionItemId}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ completed }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('Error updating action item:', error);
+    // Fallback to mock response
+    
+    // Simulate network delay
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    return {
+      success: true,
+      message: `Action item updated successfully (mock)`,
+    };
+  }
+}
+
+/**
+ * Get all tasks with filtering options
+ */
+export async function getAllTasks({ priority, meetingId } = {}) {
+  try {
+    // Build query string for filtering
+    const queryParams = new URLSearchParams();
+    if (priority) queryParams.append('priority', priority);
+    if (meetingId) queryParams.append('meetingId', meetingId);
+    
+    const queryString = queryParams.toString();
+    const url = `${BACKEND_URL}/api/actions?${queryString}`;
+    
+    const response = await fetch(url);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    return await response.json();
+  } catch (error) {
+    console.error('Error fetching tasks:', error);
+    // Fallback to mock data
+    const meetingData = {
+      // Product Planning Meeting
+      '183d5ed3-5621-471b-b1d5-6ecce54a517e': {
+        title: 'Product Planning Meeting',
+        actionItems: [
+          { id: '1', text: 'Update the project timeline document', assignee: 'Sarah', completed: false, priority: 'high' },
+          { id: '2', text: 'Schedule follow-up meeting with design team', assignee: 'Michael', completed: false, priority: 'medium' },
+          { id: '3', text: 'Create detailed specs for the new authentication flow', assignee: 'David', completed: false, priority: 'high' },
+          { id: '4', text: 'Share meeting notes with stakeholders', assignee: 'Emma', completed: false, priority: 'low' },
+          { id: '11', text: 'File a ticket for missing 2FA on admin dashboard', assignee: 'Alex', completed: false, priority: 'high' },
+          { id: '14', text: 'Update security documentation for compliance review', assignee: 'Maria', completed: false, priority: 'medium' }
+        ]
+      },
+      // Weekly Status Update
+      'ede4de4b-b3a2-41de-8844-fc2e619c78b4': {
+        title: 'Weekly Status Update',
+        actionItems: [
+          { id: '5', text: 'Follow up with IT about deployment permissions', assignee: 'John', completed: false, priority: 'medium' },
+          { id: '6', text: 'Share Q3 metrics with leadership team', assignee: 'Rebecca', completed: false, priority: 'medium' },
+          { id: '7', text: 'Schedule one-on-ones with team members', assignee: 'Lisa', completed: false, priority: 'low' },
+          { id: '12', text: 'Update website copy with new pricing', assignee: 'Priya', completed: false, priority: 'high' }
+        ]
+      },
+      // Design Review
+      '13fc322d-5579-48e8-89db-289088f4dc2c': {
+        title: 'Design Review',
+        actionItems: [
+          { id: '8', text: 'Update mobile mockups with accessibility improvements', assignee: 'Jin', completed: false, priority: 'medium' },
+          { id: '9', text: 'Research competitor approaches to similar features', assignee: 'Olivia', completed: false, priority: 'low' },
+          { id: '10', text: 'Schedule user testing for the new designs', assignee: 'Raj', completed: false, priority: 'medium' },
+          { id: '13', text: 'Own risk register for Q3 launch', assignee: 'Jordan', completed: false, priority: 'high' },
+          { id: '15', text: 'Schedule user testing sessions for new features', assignee: 'Chris', completed: false, priority: 'high' }
+        ]
+      }
+    };
+    
+    // Extract all action items as tasks
+    let allTasks = [];
+    
+    Object.entries(meetingData).forEach(([meetingId, meeting]) => {
+      const tasksFromMeeting = meeting.actionItems.map(item => ({
+        ...item,
+        meetingId,
+        meetingTitle: meeting.title
+      }));
+      allTasks = [...allTasks, ...tasksFromMeeting];
+    });
+    
+    // Apply filters if provided
+    let filteredTasks = [...allTasks];
+    
+    if (priority) {
+      filteredTasks = filteredTasks.filter(task => task.priority === priority);
+    }
+    
+    if (meetingId) {
+      filteredTasks = filteredTasks.filter(task => task.meetingId === meetingId);
+    }
+    
+    return filteredTasks;
+  }
+}
+
+// Add a comment to indicate this is a hybrid API implementation
+console.log('Using hybrid API implementation (real backend with mock fallback)');
