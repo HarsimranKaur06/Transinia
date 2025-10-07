@@ -2,10 +2,6 @@
 const nextConfig = {
   /* config options here */
   output: 'standalone', // Enable standalone output for Docker deployments
-  // Temporarily disable TypeScript checks during build to fix CI/CD
-  typescript: {
-    ignoreBuildErrors: true,
-  },
   async rewrites() {
     return [
       {
