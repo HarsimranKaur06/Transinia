@@ -13,7 +13,7 @@ env:
   CLUSTER_NAME: transinia-dev-cluster
   BACKEND_SERVICE: transinia-dev-backend-service
   FRONTEND_SERVICE: transinia-dev-frontend-service
-  BACKEND_API_URL: http://transinia-dev-alb-2115555971.us-east-1.elb.amazonaws.com
+  BACKEND_API_URL: http://transinia-dev-alb-1892657611.us-east-1.elb.amazonaws.com
 
 jobs:
   build-and-deploy:
