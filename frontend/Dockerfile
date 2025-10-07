@@ -6,7 +6,9 @@ COPY package*.json ./
 COPY tsconfig.json ./
 COPY jsconfig.json ./
 COPY next.config.js ./
+COPY .babelrc ./
 RUN npm ci --silent
+RUN npm install --save-dev babel-plugin-module-resolver
 
 # Run npm audit to surface any production vulnerabilities in build logs (does not fail build)
 RUN npm audit --production --json > /tmp/npm_audit.json || true
@@ -28,8 +30,8 @@ RUN echo "NEXT_PUBLIC_API_URL: $NEXT_PUBLIC_API_URL"
 RUN cat tsconfig.json
 RUN cat next.config.js
 
-# Run Next.js build with npm's verbose flag for additional logging
-RUN npm run build --verbose
+# Run Next.js build with standard output
+RUN npm run build
 
 # ---- Runner (distroless, non-root) ----
 FROM node:20-alpine AS runner
