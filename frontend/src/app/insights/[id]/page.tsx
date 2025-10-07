@@ -5,7 +5,7 @@ import { ArrowLeft, Users, Clock, CheckCircle, AlertCircle, RefreshCw, Download,
 import { useState, useEffect } from 'react';
 import React from 'react';
 import { Insight } from '@/types';
-import { getInsight } from '@/lib/api';
+import { getInsight } from '../../../lib/api';
 
 // Sample insight data (will be replaced with API data in production)
 const sampleInsight: Insight = {
@@ -33,14 +33,20 @@ const sampleInsight: Insight = {
   source: 'transcripts/sample-product-planning.txt'
 };
 
-export default function InsightPage({ params }: { params: { id: string } | Promise<{ id: string }> }) {
+interface PageProps {
+  params: {
+    id: string;
+  };
+}
+
+export default function InsightPage({ params }: PageProps) {
   const [insight, setInsight] = useState<Insight | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
   
-  // Get the ID from params - safely handle both Promise and direct access
-  const insightId = 'then' in params ? React.use(params).id : params.id;
+  // Get the ID from params
+  const insightId = params.id;
 
   useEffect(() => {
     async function loadInsight() {

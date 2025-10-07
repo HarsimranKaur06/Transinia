@@ -6,9 +6,7 @@ COPY package*.json ./
 COPY tsconfig.json ./
 COPY jsconfig.json ./
 COPY next.config.js ./
-COPY .babelrc ./
 RUN npm ci --silent
-RUN npm install --save-dev babel-plugin-module-resolver
 
 # Run npm audit to surface any production vulnerabilities in build logs (does not fail build)
 RUN npm audit --production --json > /tmp/npm_audit.json || true

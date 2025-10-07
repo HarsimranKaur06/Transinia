@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { ArrowLeft, FileText, Upload, Play, Check, RefreshCw, AlertCircle } from 'lucide-react';
 import { useState, useEffect } from 'react';
-import { uploadTranscript, getTranscripts, generateInsights } from '@/lib/api';
+import { uploadTranscript, getTranscripts, generateInsights } from '../../lib/api';
 import { useRouter } from 'next/navigation';
 
 // Define TypeScript interfaces for our data
