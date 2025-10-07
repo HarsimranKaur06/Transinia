@@ -33,15 +33,12 @@ EXPOSE 8001
 # ENV UVICORN_LOOP=asyncio UVICORN_HTTP=h11
 
 # Start the API
-# Debug script for environment variables
-RUN echo '#!/bin/sh\necho "==== ENVIRONMENT VARIABLES ===="\nenv | sort\necho "==== PYTHON PATH CONTENTS ===="\nfind /app -name "*.py" | sort\necho "=============================="\n\n# Execute command\nexec "$@"' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
+# Create a comprehensive fix script for import issues
+RUN echo '#!/bin/sh\n\n# Show environment information\necho "==== ENVIRONMENT VARIABLES ===="\nenv | sort\necho "==== PYTHON PATH CONTENTS ===="\nfind /app -name "*.py" | sort\necho "=============================="\n\n# Create symbolic link to make backend.src resolve to src\nmkdir -p /backend\nln -sf /app/src /backend/src\n\n# Execute command\nexec "$@"' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
-# Create Docker-specific API file with proper imports
-RUN echo '# Auto-generated Docker API file\nimport sys\nsys.path.append("/")\n\nfrom src.agents.graph import create_graph\nfrom src.config.settings import settings, logger\nfrom src.models.schemas import MeetingState\nfrom src.repositories.storage_repo import StorageRepository\n\nfrom src.api import app as application\napp = application' > /app/docker_api.py
+# Set PYTHONPATH to include both app and root directory
+ENV PYTHONPATH=/app:/
 
-# Set PYTHONPATH correctly
-ENV PYTHONPATH=/app
-
-# Use the Docker-specific API file
-ENTRYPOINT ["/app/entrypoint.sh", "python", "-m", "uvicorn", "docker_api:app"]
+# Use the original API file but with the import path fixed by symlink
+ENTRYPOINT ["/app/entrypoint.sh", "python", "-m", "uvicorn", "src.api:app"]
 CMD ["--host", "0.0.0.0", "--port", "8001", "--workers", "1"]
