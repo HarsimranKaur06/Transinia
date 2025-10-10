@@ -1,14 +1,4 @@
-name:# Deploy DynamoDB infrastructure
-      - name: Deploy DynamoDB Infrastructure
-        working-directory: ./backend/infra/dynamodb-infra
-        env:
-          TF_VAR_environment: "prod"
-          TF_VAR_dynamodb_table_meetings: ${{ secrets.PROD_DYNAMODB_TABLE_MEETINGS_BASE }}
-          TF_VAR_dynamodb_table_actions: ${{ secrets.PROD_DYNAMODB_TABLE_ACTIONS_BASE }}
-        run: |
-          terraform init -upgrade
-          terraform plan -out=dynamodb_tf.plan
-          terraform apply -auto-approve dynamodb_tf.planild, push to ECR, deploy to ECS (production)
+name: CI/CD — build, push to ECR, deploy to ECS (production)
 
 on:
   push:
@@ -143,6 +133,28 @@ jobs:
           terraform init -upgrade
           terraform plan -out=s3_tf.plan
           terraform apply -auto-approve s3_tf.plan
+
+      # Deploy ECS Fargate infrastructure
+      - name: Deploy ECS Fargate Infrastructure
+        working-directory: ./backend/infra/ecs-fargate-infra
+        env:
+          TF_VAR_environment: "prod"
+          TF_VAR_aws_region: ${{ secrets.AWS_REGION }}
+          TF_VAR_backend_ecr_repo: ${{ env.BACKEND_ECR_REPO }}
+          TF_VAR_frontend_ecr_repo: ${{ env.FRONTEND_ECR_REPO }}
+          TF_VAR_backend_image: "${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:latest"
+          TF_VAR_frontend_image: "${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:latest"
+          TF_VAR_aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          TF_VAR_aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          TF_VAR_openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+          TF_VAR_dynamodb_table_meetings_base: ${{ secrets.PROD_DYNAMODB_TABLE_MEETINGS_BASE }}
+          TF_VAR_dynamodb_table_actions_base: ${{ secrets.PROD_DYNAMODB_TABLE_ACTIONS_BASE }}
+          TF_VAR_s3_bucket_raw_base: ${{ secrets.PROD_S3_BUCKET_RAW_BASE }}
+          TF_VAR_s3_bucket_processed_base: ${{ secrets.PROD_S3_BUCKET_PROCESSED_BASE }}
+        run: |
+          terraform init -upgrade
+          terraform plan -out=ecs_tf.plan
+          terraform apply -auto-approve ecs_tf.plan
 
       - name: Deployment Success
         run: echo "Production deployment completed successfully!"

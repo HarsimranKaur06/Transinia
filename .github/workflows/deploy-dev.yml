@@ -47,6 +47,36 @@ jobs:
         with:
           mask-password: 'true'
 
+      # Set up Terraform
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.7.5
+
+      # Deploy DynamoDB infrastructure
+      - name: Deploy DynamoDB Infrastructure
+        working-directory: ./backend/infra/dynamodb-infra
+        env:
+          TF_VAR_environment: "dev"
+          TF_VAR_dynamodb_table_meetings: ${{ secrets.DEV_DYNAMODB_TABLE_MEETINGS_BASE }}
+          TF_VAR_dynamodb_table_actions: ${{ secrets.DEV_DYNAMODB_TABLE_ACTIONS_BASE }}
+        run: |
+          terraform init -upgrade
+          terraform plan -out=dynamodb_tf.plan
+          terraform apply -auto-approve dynamodb_tf.plan
+
+      # Deploy S3 bucket infrastructure
+      - name: Deploy S3 Bucket Infrastructure
+        working-directory: ./backend/infra/s3-bucket-infra
+        env:
+          TF_VAR_environment: "dev"
+          TF_VAR_s3_bucket_raw: ${{ secrets.DEV_S3_BUCKET_RAW_BASE }}
+          TF_VAR_s3_bucket_processed: ${{ secrets.DEV_S3_BUCKET_PROCESSED_BASE }}
+        run: |
+          terraform init -upgrade
+          terraform plan -out=s3_tf.plan
+          terraform apply -auto-approve s3_tf.plan
+      
       - name: Build and push backend image
         id: build-backend
         uses: docker/build-push-action@v4
@@ -99,14 +129,7 @@ jobs:
           container-name: meeting-bot
           image: ${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:latest
 
-      - name: Register & deploy backend to ECS
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
-        with:
-          task-definition: ${{ steps.deploy-backend.outputs.task-definition }}
-          service: ${{ env.BACKEND_SERVICE }}
-          cluster: ${{ env.CLUSTER_NAME }}
-          wait-for-service-stability: true
-
+      # Skip deploying to ECS directly - Terraform will handle it
       - name: Prepare frontend task definition
         run: |
           # Replace placeholders in task definition
@@ -123,43 +146,56 @@ jobs:
           container-name: frontend
           image: ${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:latest
 
-      - name: Register & deploy frontend to ECS
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
-        with:
-          task-definition: ${{ steps.deploy-frontend.outputs.task-definition }}
-          service: ${{ env.FRONTEND_SERVICE }}
-          cluster: ${{ env.CLUSTER_NAME }}
-          wait-for-service-stability: true
+      # Skip deploying to ECS directly - Terraform will handle it
           
-      # Set up Terraform
-      - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: 1.7.5
+      # Check and create ECS resources if they don't exist
+      - name: Create ECS cluster and services if missing
+        run: |
+          echo "Checking if ECS cluster exists..."
+          if ! aws ecs describe-clusters --clusters ${{ env.CLUSTER_NAME }} --query "clusters[?clusterName=='${{ env.CLUSTER_NAME }}'].clusterName" --output text | grep "${{ env.CLUSTER_NAME }}"; then
+            echo "Creating ECS cluster ${{ env.CLUSTER_NAME }}..."
+            aws ecs create-cluster --cluster-name ${{ env.CLUSTER_NAME }}
+          else
+            echo "ECS cluster ${{ env.CLUSTER_NAME }} already exists."
+          fi
+          
+          echo "Checking if backend service exists..."
+          if ! aws ecs describe-services --cluster ${{ env.CLUSTER_NAME }} --services ${{ env.BACKEND_SERVICE }} --query "services[?serviceName=='${{ env.BACKEND_SERVICE }}'].serviceName" --output text | grep "${{ env.BACKEND_SERVICE }}"; then
+            echo "Creating ECS service ${{ env.BACKEND_SERVICE }}..."
+            aws ecs create-service --cluster ${{ env.CLUSTER_NAME }} --service-name ${{ env.BACKEND_SERVICE }} --desired-count 1 --launch-type FARGATE --platform-version LATEST --network-configuration "awsvpcConfiguration={subnets=[subnet-12345678,subnet-87654321],securityGroups=[sg-12345678],assignPublicIp=ENABLED}" --task-definition transinia-dev-backend:1
+          else
+            echo "ECS service ${{ env.BACKEND_SERVICE }} already exists."
+          fi
+          
+          echo "Checking if frontend service exists..."
+          if ! aws ecs describe-services --cluster ${{ env.CLUSTER_NAME }} --services ${{ env.FRONTEND_SERVICE }} --query "services[?serviceName=='${{ env.FRONTEND_SERVICE }}'].serviceName" --output text | grep "${{ env.FRONTEND_SERVICE }}"; then
+            echo "Creating ECS service ${{ env.FRONTEND_SERVICE }}..."
+            aws ecs create-service --cluster ${{ env.CLUSTER_NAME }} --service-name ${{ env.FRONTEND_SERVICE }} --desired-count 1 --launch-type FARGATE --platform-version LATEST --network-configuration "awsvpcConfiguration={subnets=[subnet-12345678,subnet-87654321],securityGroups=[sg-12345678],assignPublicIp=ENABLED}" --task-definition transinia-dev-frontend:1
+          else
+            echo "ECS service ${{ env.FRONTEND_SERVICE }} already exists."
+          fi
 
-      # Deploy DynamoDB infrastructure
-      - name: Deploy DynamoDB Infrastructure
-        working-directory: ./backend/infra/dynamodb-infra
+      # Deploy ECS Fargate infrastructure
+      - name: Deploy ECS Fargate Infrastructure
+        working-directory: ./backend/infra/ecs-fargate-infra
         env:
           TF_VAR_environment: "dev"
-          TF_VAR_dynamodb_table_meetings: ${{ secrets.DEV_DYNAMODB_TABLE_MEETINGS_BASE }}
-          TF_VAR_dynamodb_table_actions: ${{ secrets.DEV_DYNAMODB_TABLE_ACTIONS_BASE }}
+          TF_VAR_aws_region: ${{ secrets.AWS_REGION }}
+          TF_VAR_backend_ecr_repo: ${{ env.BACKEND_ECR_REPO }}
+          TF_VAR_frontend_ecr_repo: ${{ env.FRONTEND_ECR_REPO }}
+          TF_VAR_backend_image: "${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:latest"
+          TF_VAR_frontend_image: "${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:latest"
+          TF_VAR_aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          TF_VAR_aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          TF_VAR_openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+          TF_VAR_dynamodb_table_meetings_base: ${{ secrets.DEV_DYNAMODB_TABLE_MEETINGS_BASE }}
+          TF_VAR_dynamodb_table_actions_base: ${{ secrets.DEV_DYNAMODB_TABLE_ACTIONS_BASE }}
+          TF_VAR_s3_bucket_raw_base: ${{ secrets.DEV_S3_BUCKET_RAW_BASE }}
+          TF_VAR_s3_bucket_processed_base: ${{ secrets.DEV_S3_BUCKET_PROCESSED_BASE }}
         run: |
           terraform init -upgrade
-          terraform plan -out=dynamodb_tf.plan
-          terraform apply -auto-approve dynamodb_tf.plan
-
-      # Deploy S3 bucket infrastructure
-      - name: Deploy S3 Bucket Infrastructure
-        working-directory: ./backend/infra/s3-bucket-infra
-        env:
-          TF_VAR_environment: "dev"
-          TF_VAR_s3_bucket_raw: ${{ secrets.DEV_S3_BUCKET_RAW_BASE }}
-          TF_VAR_s3_bucket_processed: ${{ secrets.DEV_S3_BUCKET_PROCESSED_BASE }}
-        run: |
-          terraform init -upgrade
-          terraform plan -out=s3_tf.plan
-          terraform apply -auto-approve s3_tf.plan
+          terraform plan -out=ecs_tf.plan
+          terraform apply -auto-approve ecs_tf.plan
 
       # Cleanup step - always runs even if prior steps fail
       - name: Cleanup
