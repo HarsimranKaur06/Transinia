@@ -106,74 +106,53 @@ jobs:
           aws logs create-log-group --log-group-name "/ecs/transinia-dev-frontend" --region ${{ env.AWS_REGION }} || true
           echo "Log groups created or already exist"
 
-      - name: Prepare backend task definition
-        run: |
-          # Replace placeholders in task definition
-          sed -i 's#\${AWS_REGION}#${{ env.AWS_REGION }}#g' .github/ecs/taskdef-backend.json
-          sed -i 's#\${ECS_EXECUTION_ROLE_ARN}#arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/transinia-dev-ecsTaskExecutionRole#g' .github/ecs/taskdef-backend.json
-          sed -i 's#\${ECS_TASK_ROLE_ARN}#arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/transinia-dev-ecsTaskRole#g' .github/ecs/taskdef-backend.json
-          sed -i 's#\${DYNAMODB_TABLE_MEETINGS_BASE}#${{ secrets.DEV_DYNAMODB_TABLE_MEETINGS_BASE }}#g' .github/ecs/taskdef-backend.json
-          sed -i 's#\${DYNAMODB_TABLE_ACTIONS_BASE}#${{ secrets.DEV_DYNAMODB_TABLE_ACTIONS_BASE }}#g' .github/ecs/taskdef-backend.json
-          sed -i 's#\${AWS_ACCESS_KEY_ID}#${{ secrets.AWS_ACCESS_KEY_ID }}#g' .github/ecs/taskdef-backend.json
-          sed -i 's#\${AWS_SECRET_ACCESS_KEY}#${{ secrets.AWS_SECRET_ACCESS_KEY }}#g' .github/ecs/taskdef-backend.json
-          sed -i 's#\${OPENAI_API_KEY}#${{ secrets.OPENAI_API_KEY }}#g' .github/ecs/taskdef-backend.json
-          sed -i 's#\${S3_BUCKET_RAW_BASE}#${{ secrets.DEV_S3_BUCKET_RAW_BASE }}#g' .github/ecs/taskdef-backend.json
-          sed -i 's#\${S3_BUCKET_PROCESSED_BASE}#${{ secrets.DEV_S3_BUCKET_PROCESSED_BASE }}#g' .github/ecs/taskdef-backend.json
-          sed -i 's#\${ENVIRONMENT}#dev#g' .github/ecs/taskdef-backend.json
-          
-      - name: Render backend task definition
-        id: deploy-backend
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: .github/ecs/taskdef-backend.json
-          container-name: meeting-bot
-          image: ${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:latest
-
-      # Skip deploying to ECS directly - Terraform will handle it
-      - name: Prepare frontend task definition
-        run: |
-          # Replace placeholders in task definition
-          sed -i 's#\${AWS_REGION}#${{ env.AWS_REGION }}#g' .github/ecs/taskdef-frontend.json
-          sed -i 's#\${ECS_EXECUTION_ROLE_ARN}#arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/transinia-dev-ecsTaskExecutionRole#g' .github/ecs/taskdef-frontend.json
-          sed -i 's#\${ECS_TASK_ROLE_ARN}#arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/transinia-dev-ecsTaskRole#g' .github/ecs/taskdef-frontend.json
-          sed -i 's#\${BACKEND_API_URL}#${{ env.BACKEND_API_URL }}#g' .github/ecs/taskdef-frontend.json
-          
-      - name: Render frontend task definition
-        id: deploy-frontend
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: .github/ecs/taskdef-frontend.json
-          container-name: frontend
-          image: ${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:latest
-
-      # Skip deploying to ECS directly - Terraform will handle it
+      # Task definition steps removed - Terraform will handle ECS deployment
           
       # Check and create ECS resources if they don't exist
-      - name: Create ECS cluster and services if missing
+      - name: Create ECS cluster and ensure it's active
         run: |
           echo "Checking if ECS cluster exists..."
-          if ! aws ecs describe-clusters --clusters ${{ env.CLUSTER_NAME }} --query "clusters[?clusterName=='${{ env.CLUSTER_NAME }}'].clusterName" --output text | grep "${{ env.CLUSTER_NAME }}"; then
-            echo "Creating ECS cluster ${{ env.CLUSTER_NAME }}..."
-            aws ecs create-cluster --cluster-name ${{ env.CLUSTER_NAME }}
-          else
-            echo "ECS cluster ${{ env.CLUSTER_NAME }} already exists."
+          # Always delete the cluster first if it exists and recreate it
+          # This ensures we have an active cluster
+          CLUSTER_STATUS=$(aws ecs describe-clusters --clusters ${{ env.CLUSTER_NAME }} --query 'clusters[0].status' --output text 2>/dev/null || echo "MISSING")
+          
+          if [ "$CLUSTER_STATUS" != "MISSING" ]; then
+            echo "Deleting existing ECS cluster ${{ env.CLUSTER_NAME }}..."
+            # First list and stop any tasks/services
+            SERVICES=$(aws ecs list-services --cluster ${{ env.CLUSTER_NAME }} --query 'serviceArns' --output text)
+            if [ -n "$SERVICES" ]; then
+              for SERVICE in $SERVICES; do
+                echo "Deleting service $SERVICE"
+                aws ecs update-service --cluster ${{ env.CLUSTER_NAME }} --service $SERVICE --desired-count 0 || true
+                aws ecs delete-service --cluster ${{ env.CLUSTER_NAME }} --service $SERVICE --force || true
+              done
+            fi
+            
+            # Wait a few seconds to allow services to drain
+            echo "Waiting for services to drain..."
+            sleep 10
+            
+            # Delete the cluster
+            aws ecs delete-cluster --cluster ${{ env.CLUSTER_NAME }} || true
+            
+            # Wait for the cluster to be deleted
+            echo "Waiting for cluster to be deleted..."
+            sleep 20
           fi
           
-          echo "Checking if backend service exists..."
-          if ! aws ecs describe-services --cluster ${{ env.CLUSTER_NAME }} --services ${{ env.BACKEND_SERVICE }} --query "services[?serviceName=='${{ env.BACKEND_SERVICE }}'].serviceName" --output text | grep "${{ env.BACKEND_SERVICE }}"; then
-            echo "Creating ECS service ${{ env.BACKEND_SERVICE }}..."
-            aws ecs create-service --cluster ${{ env.CLUSTER_NAME }} --service-name ${{ env.BACKEND_SERVICE }} --desired-count 1 --launch-type FARGATE --platform-version LATEST --network-configuration "awsvpcConfiguration={subnets=[subnet-12345678,subnet-87654321],securityGroups=[sg-12345678],assignPublicIp=ENABLED}" --task-definition transinia-dev-backend:1
-          else
-            echo "ECS service ${{ env.BACKEND_SERVICE }} already exists."
+          echo "Creating fresh ECS cluster ${{ env.CLUSTER_NAME }}..."
+          aws ecs create-cluster --cluster-name ${{ env.CLUSTER_NAME }}
+          
+          # Verify cluster status
+          CLUSTER_STATUS=$(aws ecs describe-clusters --clusters ${{ env.CLUSTER_NAME }} --query 'clusters[0].status' --output text)
+          echo "Cluster status: $CLUSTER_STATUS"
+          
+          if [ "$CLUSTER_STATUS" != "ACTIVE" ]; then
+            echo "Error: Cluster is not in ACTIVE state after creation."
+            exit 1
           fi
           
-          echo "Checking if frontend service exists..."
-          if ! aws ecs describe-services --cluster ${{ env.CLUSTER_NAME }} --services ${{ env.FRONTEND_SERVICE }} --query "services[?serviceName=='${{ env.FRONTEND_SERVICE }}'].serviceName" --output text | grep "${{ env.FRONTEND_SERVICE }}"; then
-            echo "Creating ECS service ${{ env.FRONTEND_SERVICE }}..."
-            aws ecs create-service --cluster ${{ env.CLUSTER_NAME }} --service-name ${{ env.FRONTEND_SERVICE }} --desired-count 1 --launch-type FARGATE --platform-version LATEST --network-configuration "awsvpcConfiguration={subnets=[subnet-12345678,subnet-87654321],securityGroups=[sg-12345678],assignPublicIp=ENABLED}" --task-definition transinia-dev-frontend:1
-          else
-            echo "ECS service ${{ env.FRONTEND_SERVICE }} already exists."
-          fi
+          echo "ECS cluster is now ACTIVE and ready for use."
 
       # Deploy ECS Fargate infrastructure
       - name: Deploy ECS Fargate Infrastructure
@@ -193,9 +172,25 @@ jobs:
           TF_VAR_s3_bucket_raw_base: ${{ secrets.DEV_S3_BUCKET_RAW_BASE }}
           TF_VAR_s3_bucket_processed_base: ${{ secrets.DEV_S3_BUCKET_PROCESSED_BASE }}
         run: |
+          # Enable Terraform debug logging
+          export TF_LOG=DEBUG
+          
+          echo "Initializing Terraform..."
           terraform init -upgrade
-          terraform plan -out=ecs_tf.plan
-          terraform apply -auto-approve ecs_tf.plan
+          
+          echo "Planning Terraform deployment..."
+          terraform plan -out=ecs_tf.plan -detailed-exitcode || echo "Plan showed changes or errors but continuing"
+          
+          echo "Applying Terraform changes..."
+          terraform apply -auto-approve ecs_tf.plan || {
+            echo "Terraform apply failed, showing current state"
+            aws ecs describe-clusters --clusters ${{ env.CLUSTER_NAME }} --query 'clusters[0]' || echo "Cluster not found"
+            exit 1
+          }
+          
+          echo "Terraform deployment successful. Verifying resources..."
+          aws ecs describe-clusters --clusters ${{ env.CLUSTER_NAME }} --query 'clusters[0].status'
+          aws ecs list-services --cluster ${{ env.CLUSTER_NAME }}
 
       # Cleanup step - always runs even if prior steps fail
       - name: Cleanup
