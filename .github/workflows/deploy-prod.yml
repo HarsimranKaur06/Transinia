@@ -117,10 +117,27 @@ jobs:
         working-directory: ./backend/infra/dynamodb-infra
         env:
           TF_VAR_environment: "prod"
+          TF_VAR_dynamodb_table_meetings: ${{ secrets.PROD_DYNAMODB_TABLE_MEETINGS_BASE }}
+          TF_VAR_dynamodb_table_actions: ${{ secrets.PROD_DYNAMODB_TABLE_ACTIONS_BASE }}
         run: |
-          terraform init
-          terraform plan -out=dynamodb_tf.plan
-          terraform apply -auto-approve dynamodb_tf.plan
+          terraform init -upgrade
+          
+          # Check if DynamoDB tables already exist
+          MEETINGS_TABLE="transinia-prod-${{ secrets.PROD_DYNAMODB_TABLE_MEETINGS_BASE }}"
+          ACTIONS_TABLE="transinia-prod-${{ secrets.PROD_DYNAMODB_TABLE_ACTIONS_BASE }}"
+          
+          MEETINGS_EXISTS=$(aws dynamodb describe-table --table-name "$MEETINGS_TABLE" --query "Table.TableName" --output text 2>/dev/null || echo "NOT_FOUND")
+          ACTIONS_EXISTS=$(aws dynamodb describe-table --table-name "$ACTIONS_TABLE" --query "Table.TableName" --output text 2>/dev/null || echo "NOT_FOUND")
+          
+          if [ "$MEETINGS_EXISTS" = "NOT_FOUND" ] || [ "$ACTIONS_EXISTS" = "NOT_FOUND" ]; then
+            echo "One or more DynamoDB tables don't exist. Creating infrastructure..."
+            terraform plan -out=dynamodb_tf.plan
+            terraform apply -auto-approve dynamodb_tf.plan
+          else
+            echo "DynamoDB tables already exist. Skipping creation."
+            # Still run plan to verify everything is in sync, but don't apply
+            terraform plan
+          fi
 
       # Deploy S3 bucket infrastructure
       - name: Deploy S3 Bucket Infrastructure
@@ -131,8 +148,23 @@ jobs:
           TF_VAR_s3_bucket_processed: ${{ secrets.PROD_S3_BUCKET_PROCESSED_BASE }}
         run: |
           terraform init -upgrade
-          terraform plan -out=s3_tf.plan
-          terraform apply -auto-approve s3_tf.plan
+          
+          # Check if S3 buckets already exist
+          RAW_BUCKET="transinia-prod-${{ secrets.PROD_S3_BUCKET_RAW_BASE }}"
+          PROCESSED_BUCKET="transinia-prod-${{ secrets.PROD_S3_BUCKET_PROCESSED_BASE }}"
+          
+          RAW_EXISTS=$(aws s3api head-bucket --bucket "$RAW_BUCKET" 2>/dev/null && echo "EXISTS" || echo "NOT_FOUND")
+          PROCESSED_EXISTS=$(aws s3api head-bucket --bucket "$PROCESSED_BUCKET" 2>/dev/null && echo "EXISTS" || echo "NOT_FOUND")
+          
+          if [ "$RAW_EXISTS" = "NOT_FOUND" ] || [ "$PROCESSED_EXISTS" = "NOT_FOUND" ]; then
+            echo "One or more S3 buckets don't exist. Creating infrastructure..."
+            terraform plan -out=s3_tf.plan
+            terraform apply -auto-approve s3_tf.plan
+          else
+            echo "S3 buckets already exist. Skipping creation."
+            # Still run plan to verify everything is in sync, but don't apply
+            terraform plan
+          fi
 
       # Create ECS cluster and ensure it's active
       - name: Create ECS cluster and ensure it's active
@@ -204,15 +236,27 @@ jobs:
           echo "Initializing Terraform..."
           terraform init -upgrade
           
-          echo "Planning Terraform deployment..."
-          terraform plan -out=ecs_tf.plan -detailed-exitcode || echo "Plan showed changes or errors but continuing"
+          # Check if ECS services already exist
+          CLUSTER_EXISTS=$(aws ecs describe-clusters --clusters ${{ env.CLUSTER_NAME }} --query 'clusters[0].status' --output text 2>/dev/null || echo "MISSING")
+          BACKEND_SERVICE_EXISTS=$(aws ecs describe-services --cluster ${{ env.CLUSTER_NAME }} --services ${{ env.BACKEND_SERVICE }} --query 'services[0].status' --output text 2>/dev/null || echo "MISSING")
+          FRONTEND_SERVICE_EXISTS=$(aws ecs describe-services --cluster ${{ env.CLUSTER_NAME }} --services ${{ env.FRONTEND_SERVICE }} --query 'services[0].status' --output text 2>/dev/null || echo "MISSING")
           
-          echo "Applying Terraform changes..."
-          terraform apply -auto-approve ecs_tf.plan || {
-            echo "Terraform apply failed, showing current state"
-            aws ecs describe-clusters --clusters ${{ env.CLUSTER_NAME }} --query 'clusters[0]' || echo "Cluster not found"
-            exit 1
-          }
+          if [ "$CLUSTER_EXISTS" = "MISSING" ] || [ "$BACKEND_SERVICE_EXISTS" = "MISSING" ] || [ "$FRONTEND_SERVICE_EXISTS" = "MISSING" ]; then
+            echo "One or more ECS resources don't exist. Creating infrastructure..."
+            echo "Planning Terraform deployment..."
+            terraform plan -out=ecs_tf.plan -detailed-exitcode || echo "Plan showed changes or errors but continuing"
+            
+            echo "Applying Terraform changes..."
+            terraform apply -auto-approve ecs_tf.plan || {
+              echo "Terraform apply failed, showing current state"
+              aws ecs describe-clusters --clusters ${{ env.CLUSTER_NAME }} --query 'clusters[0]' || echo "Cluster not found"
+              exit 1
+            }
+          else
+            echo "ECS resources already exist. Skipping creation."
+            # Still run plan to verify everything is in sync, but don't apply
+            terraform plan
+          fi
           
           echo "Terraform deployment successful. Verifying resources..."
           aws ecs describe-clusters --clusters ${{ env.CLUSTER_NAME }} --query 'clusters[0].status'
