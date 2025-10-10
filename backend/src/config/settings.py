@@ -32,19 +32,44 @@ logger = logging.getLogger("meeting-bot-local")
 
 @dataclass(frozen=True)
 class Settings:
+    # Environment
+    environment: str = os.getenv("ENVIRONMENT", "dev")
+    
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     # AWS credentials
     aws_access_key_id: str = os.getenv("AWS_ACCESS_KEY_ID", "")
     aws_secret_access_key: str = os.getenv("AWS_SECRET_ACCESS_KEY", "")
     aws_region: str = os.getenv("AWS_REGION", "us-east-1")
-    # S3 buckets
-    s3_bucket_raw: str = os.getenv("S3_BUCKET_RAW", "meeting-bot-transcripts")
-    s3_bucket_processed: str = os.getenv("S3_BUCKET_PROCESSED", "meeting-bot-outputs")
-    # DynamoDB settings
+    
+    # S3 buckets with environment prefix
+    _s3_bucket_raw_base: str = os.getenv("S3_BUCKET_RAW_BASE", "transcripts")
+    _s3_bucket_processed_base: str = os.getenv("S3_BUCKET_PROCESSED_BASE", "outputs")
+    
+    # DynamoDB settings with environment prefix
     use_dynamodb: bool = os.getenv("USE_DYNAMODB", "false").lower() in ("true", "1", "yes")
-    dynamodb_table_meetings: str = os.getenv("DYNAMODB_TABLE_MEETINGS", "transinia-meetings")
-    dynamodb_table_actions: str = os.getenv("DYNAMODB_TABLE_ACTIONS", "transinia-actions")
+    _dynamodb_table_meetings_base: str = os.getenv("DYNAMODB_TABLE_MEETINGS_BASE", "meetings")
+    _dynamodb_table_actions_base: str = os.getenv("DYNAMODB_TABLE_ACTIONS_BASE", "actions")
+    
+    # Dynamic properties that include environment prefix
+    @property
+    def s3_bucket_raw(self) -> str:
+        return f"transinia-{self.environment}-{self._s3_bucket_raw_base}"
+        
+    @property
+    def s3_bucket_processed(self) -> str:
+        return f"transinia-{self.environment}-{self._s3_bucket_processed_base}"
+        
+    @property
+    def dynamodb_table_meetings(self) -> str:
+        return f"transinia-{self.environment}-{self._dynamodb_table_meetings_base}"
+        
+    @property
+    def dynamodb_table_actions(self) -> str:
+        return f"transinia-{self.environment}-{self._dynamodb_table_actions_base}"
+    
     # Legacy setting for backward compatibility
-    dynamodb_table_name: str = os.getenv("DYNAMODB_TABLE_NAME", "transinia-meetings")
+    @property
+    def dynamodb_table_name(self) -> str:
+        return self.dynamodb_table_meetings
 
 settings = Settings()

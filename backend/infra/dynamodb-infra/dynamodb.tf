@@ -2,7 +2,7 @@
 
 # Meetings table - stores complete meeting records
 resource "aws_dynamodb_table" "meetings" {
-  name           = var.dynamodb_table_meetings
+  name           = "transinia-${var.environment}-${var.dynamodb_table_meetings}"
   billing_mode   = "PAY_PER_REQUEST"  # On-demand capacity
   hash_key       = "meeting_id"
   range_key      = "date"
@@ -63,7 +63,7 @@ resource "aws_dynamodb_table" "meetings" {
 
 # Actions table - stores individual action items for faster querying
 resource "aws_dynamodb_table" "actions" {
-  name           = var.dynamodb_table_actions
+  name           = "transinia-${var.environment}-${var.dynamodb_table_actions}"
   billing_mode   = "PAY_PER_REQUEST"  # On-demand capacity
   hash_key       = "action_id"
   range_key      = "meeting_id"

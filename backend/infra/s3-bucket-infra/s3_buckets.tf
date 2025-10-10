@@ -11,12 +11,12 @@
 
 # Raw transcripts bucket
 resource "aws_s3_bucket" "raw_bucket" {
-  bucket = var.s3_bucket_raw
+  bucket = "transinia-${var.environment}-${var.s3_bucket_raw}"
   
   tags = merge(
     local.common_tags,
     {
-      Name = "Meeting Bot Transcripts"
+      Name = "Transinia ${var.environment} Transcripts"
       Description = "Stores raw meeting transcripts for processing"
     }
   )
@@ -61,12 +61,12 @@ resource "aws_s3_bucket_versioning" "raw_bucket_versioning" {
 
 # Processed outputs bucket
 resource "aws_s3_bucket" "processed_bucket" {
-  bucket = var.s3_bucket_processed
+  bucket = "transinia-${var.environment}-${var.s3_bucket_processed}"
   
   tags = merge(
     local.common_tags,
     {
-      Name = "Meeting Bot Outputs"
+      Name = "Transinia ${var.environment} Outputs"
       Description = "Stores processed meeting minutes and action items"
     }
   )

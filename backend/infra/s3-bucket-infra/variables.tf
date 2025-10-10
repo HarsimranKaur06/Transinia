@@ -17,14 +17,14 @@ variable "aws_region" {
 }
 
 variable "s3_bucket_raw" {
-  description = "Name of S3 bucket for raw transcripts"
-  default     = "meeting-bot-transcripts"
+  description = "Base name of S3 bucket for raw transcripts (environment will be prefixed)"
+  default     = "transcripts"
   type        = string
 }
 
 variable "s3_bucket_processed" {
-  description = "Name of S3 bucket for processed outputs"
-  default     = "meeting-bot-outputs"
+  description = "Base name of S3 bucket for processed outputs (environment will be prefixed)"
+  default     = "outputs"
   type        = string
 }
 

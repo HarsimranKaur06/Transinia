@@ -13,15 +13,16 @@
       "essential": true,
       "portMappings": [ { "containerPort": 8001, "protocol": "tcp" } ],
       "environment": [
+        { "name": "ENVIRONMENT", "value": "${ENVIRONMENT}" },
         { "name": "USE_DYNAMODB", "value": "true" },
         { "name": "AWS_REGION", "value": "${AWS_REGION}" },
-        { "name": "DYNAMODB_TABLE_MEETINGS", "value": "${DYNAMODB_TABLE_MEETINGS}" },
-        { "name": "DYNAMODB_TABLE_ACTIONS", "value": "${DYNAMODB_TABLE_ACTIONS}" },
+        { "name": "DYNAMODB_TABLE_MEETINGS_BASE", "value": "${DYNAMODB_TABLE_MEETINGS_BASE}" },
+        { "name": "DYNAMODB_TABLE_ACTIONS_BASE", "value": "${DYNAMODB_TABLE_ACTIONS_BASE}" },
         { "name": "AWS_ACCESS_KEY_ID", "value": "${AWS_ACCESS_KEY_ID}" },
         { "name": "AWS_SECRET_ACCESS_KEY", "value": "${AWS_SECRET_ACCESS_KEY}" },
         { "name": "OPENAI_API_KEY", "value": "${OPENAI_API_KEY}" },
-        { "name": "S3_BUCKET_RAW", "value": "${S3_BUCKET_RAW}" },
-        { "name": "S3_BUCKET_PROCESSED", "value": "${S3_BUCKET_PROCESSED}" },
+        { "name": "S3_BUCKET_RAW_BASE", "value": "${S3_BUCKET_RAW_BASE}" },
+        { "name": "S3_BUCKET_PROCESSED_BASE", "value": "${S3_BUCKET_PROCESSED_BASE}" },
         { "name": "LOG_LEVEL", "value": "INFO" }
       ],
       "logConfiguration": {

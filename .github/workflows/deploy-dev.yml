@@ -5,11 +5,12 @@ on:
     branches: [ dev ]
 
 env:
+  ENVIRONMENT: dev
   AWS_REGION: ${{ secrets.AWS_REGION }}
   AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
   ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
-  BACKEND_ECR_REPO: transinia-backend
-  FRONTEND_ECR_REPO: transinia-frontend
+  BACKEND_ECR_REPO: transinia-dev-backend
+  FRONTEND_ECR_REPO: transinia-dev-frontend
   CLUSTER_NAME: transinia-dev-cluster
   BACKEND_SERVICE: transinia-dev-backend-service
   FRONTEND_SERVICE: transinia-dev-frontend-service
@@ -81,13 +82,14 @@ jobs:
           sed -i 's#\${AWS_REGION}#${{ env.AWS_REGION }}#g' .github/ecs/taskdef-backend.json
           sed -i 's#\${ECS_EXECUTION_ROLE_ARN}#arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/transinia-dev-ecsTaskExecutionRole#g' .github/ecs/taskdef-backend.json
           sed -i 's#\${ECS_TASK_ROLE_ARN}#arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/transinia-dev-ecsTaskRole#g' .github/ecs/taskdef-backend.json
-          sed -i 's#\${DYNAMODB_TABLE_MEETINGS}#${{ secrets.DYNAMODB_TABLE_MEETINGS }}#g' .github/ecs/taskdef-backend.json
-          sed -i 's#\${DYNAMODB_TABLE_ACTIONS}#${{ secrets.DYNAMODB_TABLE_ACTIONS }}#g' .github/ecs/taskdef-backend.json
+          sed -i 's#\${DYNAMODB_TABLE_MEETINGS_BASE}#${{ secrets.DEV_DYNAMODB_TABLE_MEETINGS_BASE }}#g' .github/ecs/taskdef-backend.json
+          sed -i 's#\${DYNAMODB_TABLE_ACTIONS_BASE}#${{ secrets.DEV_DYNAMODB_TABLE_ACTIONS_BASE }}#g' .github/ecs/taskdef-backend.json
           sed -i 's#\${AWS_ACCESS_KEY_ID}#${{ secrets.AWS_ACCESS_KEY_ID }}#g' .github/ecs/taskdef-backend.json
           sed -i 's#\${AWS_SECRET_ACCESS_KEY}#${{ secrets.AWS_SECRET_ACCESS_KEY }}#g' .github/ecs/taskdef-backend.json
           sed -i 's#\${OPENAI_API_KEY}#${{ secrets.OPENAI_API_KEY }}#g' .github/ecs/taskdef-backend.json
-          sed -i 's#\${S3_BUCKET_RAW}#${{ secrets.S3_BUCKET_RAW }}#g' .github/ecs/taskdef-backend.json
-          sed -i 's#\${S3_BUCKET_PROCESSED}#${{ secrets.S3_BUCKET_PROCESSED }}#g' .github/ecs/taskdef-backend.json
+          sed -i 's#\${S3_BUCKET_RAW_BASE}#${{ secrets.DEV_S3_BUCKET_RAW_BASE }}#g' .github/ecs/taskdef-backend.json
+          sed -i 's#\${S3_BUCKET_PROCESSED_BASE}#${{ secrets.DEV_S3_BUCKET_PROCESSED_BASE }}#g' .github/ecs/taskdef-backend.json
+          sed -i 's#\${ENVIRONMENT}#dev#g' .github/ecs/taskdef-backend.json
           
       - name: Render backend task definition
         id: deploy-backend
@@ -129,6 +131,36 @@ jobs:
           cluster: ${{ env.CLUSTER_NAME }}
           wait-for-service-stability: true
           
+      # Set up Terraform
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.7.5
+
+      # Deploy DynamoDB infrastructure
+      - name: Deploy DynamoDB Infrastructure
+        working-directory: ./backend/infra/dynamodb-infra
+        env:
+          TF_VAR_environment: "dev"
+          TF_VAR_dynamodb_table_meetings: ${{ secrets.DEV_DYNAMODB_TABLE_MEETINGS_BASE }}
+          TF_VAR_dynamodb_table_actions: ${{ secrets.DEV_DYNAMODB_TABLE_ACTIONS_BASE }}
+        run: |
+          terraform init -upgrade
+          terraform plan -out=dynamodb_tf.plan
+          terraform apply -auto-approve dynamodb_tf.plan
+
+      # Deploy S3 bucket infrastructure
+      - name: Deploy S3 Bucket Infrastructure
+        working-directory: ./backend/infra/s3-bucket-infra
+        env:
+          TF_VAR_environment: "dev"
+          TF_VAR_s3_bucket_raw: ${{ secrets.DEV_S3_BUCKET_RAW_BASE }}
+          TF_VAR_s3_bucket_processed: ${{ secrets.DEV_S3_BUCKET_PROCESSED_BASE }}
+        run: |
+          terraform init -upgrade
+          terraform plan -out=s3_tf.plan
+          terraform apply -auto-approve s3_tf.plan
+
       # Cleanup step - always runs even if prior steps fail
       - name: Cleanup
         if: always()

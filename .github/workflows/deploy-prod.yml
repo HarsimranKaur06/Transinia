@@ -1,0 +1,148 @@
+name:# Deploy DynamoDB infrastructure
+      - name: Deploy DynamoDB Infrastructure
+        working-directory: ./backend/infra/dynamodb-infra
+        env:
+          TF_VAR_environment: "prod"
+          TF_VAR_dynamodb_table_meetings: ${{ secrets.PROD_DYNAMODB_TABLE_MEETINGS_BASE }}
+          TF_VAR_dynamodb_table_actions: ${{ secrets.PROD_DYNAMODB_TABLE_ACTIONS_BASE }}
+        run: |
+          terraform init -upgrade
+          terraform plan -out=dynamodb_tf.plan
+          terraform apply -auto-approve dynamodb_tf.planild, push to ECR, deploy to ECS (production)
+
+on:
+  push:
+    branches: [ main ]
+  # DynamoDB infrastructure
+      - name: Deploy DynamoDB Infrastructure
+        working-directory: ./backend/infra/dynamodb-infra
+        env:
+          TF_VAR_environment: "prod"
+          TF_VAR_dynamodb_table_meetings: ${{ secrets.PROD_DYNAMODB_TABLE_MEETINGS_BASE }}
+          TF_VAR_dynamodb_table_actions: ${{ secrets.PROD_DYNAMODB_TABLE_ACTIONS_BASE }}
+        run: |
+          terraform init
+          terraform plan -out=dynamodb_tf.plan
+          terraform apply -auto-approve dynamodb_tf.planl: Add manual trigger
+  workflow_dispatch:
+    inputs:
+      deploy_reason:
+        description: 'Reason for manual deployment'
+        required: true
+        default: 'Manual production deployment'
+
+env:
+  ENVIRONMENT: prod
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
+  BACKEND_ECR_REPO: transinia-prod-backend
+  FRONTEND_ECR_REPO: transinia-prod-frontend
+  CLUSTER_NAME: transinia-prod-cluster
+  BACKEND_SERVICE: transinia-prod-backend-service
+  FRONTEND_SERVICE: transinia-prod-frontend-service
+  BACKEND_API_URL: http://transinia-prod-alb.us-east-1.elb.amazonaws.com
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+    if: always()
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Create ECR repositories if missing
+        run: |
+          aws ecr describe-repositories --repository-names $BACKEND_ECR_REPO >/dev/null 2>&1 || aws ecr create-repository --repository-name $BACKEND_ECR_REPO
+          aws ecr describe-repositories --repository-names $FRONTEND_ECR_REPO >/dev/null 2>&1 || aws ecr create-repository --repository-name $FRONTEND_ECR_REPO
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v1
+        id: ecr-login
+        with:
+          mask-password: 'true'
+
+      - name: Build and push backend image
+        id: build-backend
+        env:
+          ECR_REPO: ${{ env.BACKEND_ECR_REPO }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build \
+            --build-arg ENVIRONMENT=${{ env.ENVIRONMENT }} \
+            -t $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG \
+            -t $ECR_REGISTRY/$ECR_REPO:latest ./backend
+          docker push $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPO:latest
+          echo "image=$ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Build and push frontend image
+        id: build-frontend
+        env:
+          ECR_REPO: ${{ env.FRONTEND_ECR_REPO }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build \
+            --build-arg NEXT_PUBLIC_BACKEND_URL=${{ env.BACKEND_API_URL }} \
+            -t $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG \
+            -t $ECR_REGISTRY/$ECR_REPO:latest ./frontend
+          docker push $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPO:latest
+          echo "image=$ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      # Deploy the backend service
+      - name: Update backend service
+        run: |
+          aws ecs update-service --cluster $CLUSTER_NAME --service $BACKEND_SERVICE --force-new-deployment
+
+      # Deploy the frontend service
+      - name: Update frontend service
+        run: |
+          aws ecs update-service --cluster $CLUSTER_NAME --service $FRONTEND_SERVICE --force-new-deployment
+
+      - name: Wait for services to stabilize
+        run: |
+          aws ecs wait services-stable --cluster $CLUSTER_NAME --services $BACKEND_SERVICE
+          aws ecs wait services-stable --cluster $CLUSTER_NAME --services $FRONTEND_SERVICE
+
+      # Deploy Terraform Infrastructure
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.7.5
+
+      # Deploy DynamoDB infrastructure
+      - name: Deploy DynamoDB Infrastructure
+        working-directory: ./backend/infra/dynamodb-infra
+        env:
+          TF_VAR_environment: "prod"
+        run: |
+          terraform init
+          terraform plan -out=dynamodb_tf.plan
+          terraform apply -auto-approve dynamodb_tf.plan
+
+      # Deploy S3 bucket infrastructure
+      - name: Deploy S3 Bucket Infrastructure
+        working-directory: ./backend/infra/s3-bucket-infra
+        env:
+          TF_VAR_environment: "prod"
+          TF_VAR_s3_bucket_raw: ${{ secrets.PROD_S3_BUCKET_RAW_BASE }}
+          TF_VAR_s3_bucket_processed: ${{ secrets.PROD_S3_BUCKET_PROCESSED_BASE }}
+        run: |
+          terraform init -upgrade
+          terraform plan -out=s3_tf.plan
+          terraform apply -auto-approve s3_tf.plan
+
+      - name: Deployment Success
+        run: echo "Production deployment completed successfully!"
