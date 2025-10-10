@@ -50,12 +50,10 @@ resource "aws_iam_role" "ecs_task_role" {
 }
 
 # DynamoDB table ARNs by name (existing tables)
-data "aws_dynamodb_table" "meetings" {
-  name = var.dynamodb_table_meetings
-}
-
-data "aws_dynamodb_table" "actions" {
-  name = var.dynamodb_table_actions
+# We'll construct these ARNs manually to avoid dependency issues
+locals {
+  dynamodb_meetings_arn = "arn:aws:dynamodb:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/transinia-${var.environment}-${var.dynamodb_table_meetings_base}"
+  dynamodb_actions_arn = "arn:aws:dynamodb:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/transinia-${var.environment}-${var.dynamodb_table_actions_base}"
 }
 
 # Least-privilege DynamoDB access
@@ -78,10 +76,10 @@ resource "aws_iam_role_policy" "task_ddb_access" {
         "dynamodb:DescribeTable"
       ],
       Resource = [
-        data.aws_dynamodb_table.meetings.arn,
-        "${data.aws_dynamodb_table.meetings.arn}/index/*",
-        data.aws_dynamodb_table.actions.arn,
-        "${data.aws_dynamodb_table.actions.arn}/index/*"
+        local.dynamodb_meetings_arn,
+        "${local.dynamodb_meetings_arn}/index/*",
+        local.dynamodb_actions_arn,
+        "${local.dynamodb_actions_arn}/index/*"
       ]
     }]
   })

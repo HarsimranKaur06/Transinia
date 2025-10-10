@@ -13,6 +13,12 @@ variable "env" {
   default = "dev"
 }
 
+variable "environment" {
+  type    = string
+  default = "dev"
+  description = "Environment name for resources (prod, dev, etc.)"
+}
+
 # VPC CIDRs
 variable "vpc_cidr" {
   type    = string
@@ -62,15 +68,30 @@ variable "s3_bucket_processed" {
   default = "meeting-bot-outputs"
 }
 
-# Existing DynamoDB tables (from your .env)
+# DynamoDB table base names
+variable "dynamodb_table_meetings_base" {
+  type    = string
+  default = "meetings"
+  description = "Base name for meetings DynamoDB table, will be prefixed with transinia-{env}-"
+}
+
+variable "dynamodb_table_actions_base" {
+  type    = string
+  default = "actions"
+  description = "Base name for actions DynamoDB table, will be prefixed with transinia-{env}-"
+}
+
+# For backward compatibility
 variable "dynamodb_table_meetings" {
   type    = string
-  default = "meeting-bot-meetings"
+  default = ""
+  description = "Full name of meetings table (deprecated, use dynamodb_table_meetings_base instead)"
 }
 
 variable "dynamodb_table_actions" {
   type    = string
-  default = "meeting-bot-actions"
+  default = ""
+  description = "Full name of actions table (deprecated, use dynamodb_table_actions_base instead)"
 }
 
 # App envs from .env (no secrets here)
