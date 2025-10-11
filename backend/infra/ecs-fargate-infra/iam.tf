@@ -1,5 +1,7 @@
 # Task execution role (pull from ECR, write logs)
 resource "aws_iam_role" "ecs_task_execution" {
+  count = var.create_iam_resources ? 1 : 0
+  
   name               = "${local.app}-${local.env}-ecsTaskExecutionRole"
   assume_role_policy = data.aws_iam_policy_document.ecs_task_assume.json
 }
@@ -14,15 +16,32 @@ data "aws_iam_policy_document" "ecs_task_assume" {
   }
 }
 
+# Look up the execution role if it exists
+data "aws_iam_role" "existing_ecs_task_execution" {
+  count = var.create_iam_resources ? 0 : 1
+  name  = "${local.app}-${local.env}-ecsTaskExecutionRole"
+}
+
+# Use either created or existing role
+locals {
+  ecs_task_execution_role_name = var.create_iam_resources ? aws_iam_role.ecs_task_execution[0].name : data.aws_iam_role.existing_ecs_task_execution[0].name
+  ecs_task_execution_role_id   = var.create_iam_resources ? aws_iam_role.ecs_task_execution[0].id : data.aws_iam_role.existing_ecs_task_execution[0].id
+  ecs_task_execution_role_arn  = var.create_iam_resources ? aws_iam_role.ecs_task_execution[0].arn : data.aws_iam_role.existing_ecs_task_execution[0].arn
+}
+
 resource "aws_iam_role_policy_attachment" "ecs_task_exec_attach" {
-  role       = aws_iam_role.ecs_task_execution.name
+  count = var.create_iam_resources ? 1 : 0
+  
+  role       = local.ecs_task_execution_role_name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
 # Add explicit CloudWatch Logs permissions for the ECS task execution role
 resource "aws_iam_role_policy" "ecs_cloudwatch_logs" {
+  count = var.create_iam_resources ? 1 : 0
+  
   name = "${local.app}-${local.env}-cloudwatch-logs-policy"
-  role = aws_iam_role.ecs_task_execution.id
+  role = local.ecs_task_execution_role_id
 
   policy = jsonencode({
     Version = "2012-10-17",
@@ -45,8 +64,23 @@ resource "aws_iam_role_policy" "ecs_cloudwatch_logs" {
 
 # Task role (app permissions)
 resource "aws_iam_role" "ecs_task_role" {
+  count = var.create_iam_resources ? 1 : 0
+  
   name               = "${local.app}-${local.env}-ecsTaskRole"
   assume_role_policy = data.aws_iam_policy_document.ecs_task_assume.json
+}
+
+# Look up the task role if it exists
+data "aws_iam_role" "existing_ecs_task_role" {
+  count = var.create_iam_resources ? 0 : 1
+  name  = "${local.app}-${local.env}-ecsTaskRole"
+}
+
+# Use either created or existing role
+locals {
+  ecs_task_role_name = var.create_iam_resources ? aws_iam_role.ecs_task_role[0].name : data.aws_iam_role.existing_ecs_task_role[0].name
+  ecs_task_role_id   = var.create_iam_resources ? aws_iam_role.ecs_task_role[0].id : data.aws_iam_role.existing_ecs_task_role[0].id
+  ecs_task_role_arn  = var.create_iam_resources ? aws_iam_role.ecs_task_role[0].arn : data.aws_iam_role.existing_ecs_task_role[0].arn
 }
 
 # DynamoDB table ARNs by name (existing tables)
@@ -58,8 +92,10 @@ locals {
 
 # Least-privilege DynamoDB access
 resource "aws_iam_role_policy" "task_ddb_access" {
+  count = var.create_iam_resources ? 1 : 0
+  
   name = "${local.app}-${local.env}-ddb-access"
-  role = aws_iam_role.ecs_task_role.id
+  role = local.ecs_task_role_id
   policy = jsonencode({
     Version = "2012-10-17",
     Statement = [{
@@ -94,8 +130,10 @@ locals {
 }
 
 resource "aws_iam_role_policy" "task_s3_access" {
+  count = var.create_iam_resources ? 1 : 0
+  
   name = "${local.app}-${local.env}-s3-access"
-  role = aws_iam_role.ecs_task_role.id
+  role = local.ecs_task_role_id
   policy = jsonencode({
     Version = "2012-10-17",
     Statement = [

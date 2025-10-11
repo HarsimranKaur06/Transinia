@@ -212,10 +212,49 @@ jobs:
           BACKEND_SERVICE_EXISTS=$(aws ecs describe-services --cluster ${{ env.CLUSTER_NAME }} --services ${{ env.BACKEND_SERVICE }} --query "services[?status=='ACTIVE'].serviceName" --output text 2>/dev/null || echo "NOT_FOUND")
           FRONTEND_SERVICE_EXISTS=$(aws ecs describe-services --cluster ${{ env.CLUSTER_NAME }} --services ${{ env.FRONTEND_SERVICE }} --query "services[?status=='ACTIVE'].serviceName" --output text 2>/dev/null || echo "NOT_FOUND")
           
+          # Check if CloudWatch log groups exist
+          BACKEND_LOG_GROUP_EXISTS=$(aws logs describe-log-groups --log-group-name-prefix "/ecs/${{ env.CLUSTER_NAME }}-backend" --query "logGroups[0].logGroupName" --output text 2>/dev/null || echo "NOT_FOUND")
+          FRONTEND_LOG_GROUP_EXISTS=$(aws logs describe-log-groups --log-group-name-prefix "/ecs/${{ env.CLUSTER_NAME }}-frontend" --query "logGroups[0].logGroupName" --output text 2>/dev/null || echo "NOT_FOUND")
+          
+          # Check if VPC resources exist
+          VPC_EXISTS=$(aws ec2 describe-vpcs --filters "Name=tag:Name,Values=transinia-dev-vpc" --query "Vpcs[0].VpcId" --output text 2>/dev/null || echo "NOT_FOUND")
+          
+          # Check if IAM roles exist
+          TASK_ROLE_EXISTS=$(aws iam get-role --role-name "transinia-dev-ecsTaskRole" --query "Role.RoleName" --output text 2>/dev/null || echo "NOT_FOUND")
+          EXEC_ROLE_EXISTS=$(aws iam get-role --role-name "transinia-dev-ecsTaskExecutionRole" --query "Role.RoleName" --output text 2>/dev/null || echo "NOT_FOUND")
+          
+          # Set variables based on existing resources
+          if [ "$BACKEND_LOG_GROUP_EXISTS" != "NOT_FOUND" ] || [ "$FRONTEND_LOG_GROUP_EXISTS" != "NOT_FOUND" ]; then
+            echo "CloudWatch log groups already exist. Setting create_cloudwatch_log_groups=false"
+            CREATE_CLOUDWATCH="false"
+          else
+            echo "CloudWatch log groups don't exist. Will create them."
+            CREATE_CLOUDWATCH="true"
+          fi
+          
+          if [ "$VPC_EXISTS" != "NOT_FOUND" ]; then
+            echo "VPC already exists. Setting create_vpc_resources=false"
+            CREATE_VPC="false"
+          else
+            echo "VPC doesn't exist. Will create it."
+            CREATE_VPC="true"
+          fi
+          
+          if [ "$TASK_ROLE_EXISTS" != "NOT_FOUND" ] && [ "$EXEC_ROLE_EXISTS" != "NOT_FOUND" ]; then
+            echo "IAM roles already exist. Setting create_iam_resources=false"
+            CREATE_IAM="false"
+          else
+            echo "IAM roles don't exist. Will create them."
+            CREATE_IAM="true"
+          fi
+          
+          # Combine all variables
+          TERRAFORM_VARS="-var=create_cloudwatch_log_groups=$CREATE_CLOUDWATCH -var=create_vpc_resources=$CREATE_VPC -var=create_iam_resources=$CREATE_IAM -var=create_alb_resources=$CREATE_VPC"
+          
           if [ -z "$BACKEND_SERVICE_EXISTS" ] || [ -z "$FRONTEND_SERVICE_EXISTS" ]; then
             echo "One or more ECS services don't exist. Creating infrastructure..."
             echo "Planning Terraform deployment..."
-            terraform plan -out=ecs_tf.plan
+            terraform plan $TERRAFORM_VARS -out=ecs_tf.plan
             
             echo "Applying Terraform changes..."
             terraform apply -auto-approve ecs_tf.plan || {
@@ -226,7 +265,7 @@ jobs:
           else
             echo "ECS services already exist. Running plan to update services with latest images..."
             # Run plan and apply but don't auto-approve
-            terraform plan -out=ecs_tf.plan
+            terraform plan $TERRAFORM_VARS -out=ecs_tf.plan
             
             # Check if there are any changes
             PLAN_OUTPUT=$(terraform show -no-color ecs_tf.plan)

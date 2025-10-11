@@ -22,51 +22,120 @@ locals {
 }
 
 resource "aws_vpc" "main" {
+  count = var.create_vpc_resources ? 1 : 0
+  
   cidr_block = var.vpc_cidr
   tags       = merge(local.tags, { Name = "${local.app}-${local.env}-vpc" })
 }
 
+# Data source to fetch existing VPC if not creating one
+data "aws_vpc" "existing" {
+  count = var.create_vpc_resources ? 0 : 1
+  
+  filter {
+    name   = "tag:Name"
+    values = ["${local.app}-${local.env}-vpc"]
+  }
+}
+
+# Local value to use either the created VPC or the data source
+locals {
+  vpc_id = var.create_vpc_resources ? aws_vpc.main[0].id : data.aws_vpc.existing[0].id
+}
+
 resource "aws_internet_gateway" "igw" {
-  vpc_id = aws_vpc.main.id
+  count = var.create_vpc_resources ? 1 : 0
+  
+  vpc_id = local.vpc_id
   tags   = merge(local.tags, { Name = "${local.app}-${local.env}-igw" })
 }
 
 # PUBLIC SUBNETS (2) — pinned to first two standard AZs
 resource "aws_subnet" "public_a" {
-  vpc_id                  = aws_vpc.main.id
+  count = var.create_vpc_resources ? 1 : 0
+  
+  vpc_id                  = local.vpc_id
   cidr_block              = local.public_cidrs[0]
   availability_zone       = local.azs_std[0]
   map_public_ip_on_launch = true
-  tags                    = merge(local.tags, { Name = "${local.app}-${local.env}-public-1" })
+  tags                    = merge(local.tags, { Name = "${local.app}-${local.env}-subnet-public-a" })
 }
 
 resource "aws_subnet" "public_b" {
-  vpc_id                  = aws_vpc.main.id
+  count = var.create_vpc_resources ? 1 : 0
+  
+  vpc_id                  = local.vpc_id
   cidr_block              = local.public_cidrs[1]
   availability_zone       = local.azs_std[1]
   map_public_ip_on_launch = true
-  tags                    = merge(local.tags, { Name = "${local.app}-${local.env}-public-2" })
+  tags                    = merge(local.tags, { Name = "${local.app}-${local.env}-subnet-public-b" })
+}
+
+# Data sources to fetch existing subnets if not creating them
+data "aws_subnet" "public_a" {
+  count = var.create_vpc_resources ? 0 : 1
+  
+  filter {
+    name   = "tag:Name"
+    values = ["${local.app}-${local.env}-subnet-public-a"]
+  }
+}
+
+data "aws_subnet" "public_b" {
+  count = var.create_vpc_resources ? 0 : 1
+  
+  filter {
+    name   = "tag:Name"
+    values = ["${local.app}-${local.env}-subnet-public-b"]
+  }
+}
+
+# Local values for subnet IDs
+locals {
+  public_subnet_a_id = var.create_vpc_resources ? aws_subnet.public_a[0].id : data.aws_subnet.public_a[0].id
+  public_subnet_b_id = var.create_vpc_resources ? aws_subnet.public_b[0].id : data.aws_subnet.public_b[0].id
 }
 
 resource "aws_route_table" "public" {
-  vpc_id = aws_vpc.main.id
-  tags   = merge(local.tags, { Name = "${local.app}-${local.env}-public-rt" })
+  count = var.create_vpc_resources ? 1 : 0
+  
+  vpc_id = local.vpc_id
+  tags   = merge(local.tags, { Name = "${local.app}-${local.env}-rt-public" })
+}
+
+data "aws_route_table" "public" {
+  count = var.create_vpc_resources ? 0 : 1
+  
+  filter {
+    name   = "tag:Name"
+    values = ["${local.app}-${local.env}-rt-public"]
+  }
+}
+
+locals {
+  public_route_table_id = var.create_vpc_resources ? aws_route_table.public[0].id : data.aws_route_table.public[0].id
 }
 
 resource "aws_route" "public_igw" {
-  route_table_id         = aws_route_table.public.id
+  count = var.create_vpc_resources ? 1 : 0
+  
+  route_table_id         = local.public_route_table_id
   destination_cidr_block = "0.0.0.0/0"
-  gateway_id             = aws_internet_gateway.igw.id
+  gateway_id             = var.create_vpc_resources ? aws_internet_gateway.igw[0].id : null
 }
 
 resource "aws_route_table_association" "public_assoc_a" {
-  subnet_id      = aws_subnet.public_a.id
-  route_table_id = aws_route_table.public.id
+  count = var.create_vpc_resources ? 1 : 0
+  
+  subnet_id      = local.public_subnet_a_id
+  route_table_id = local.public_route_table_id
 }
 
 resource "aws_route_table_association" "public_assoc_b" {
-  subnet_id      = aws_subnet.public_b.id
-  route_table_id = aws_route_table.public.id
+  count = var.create_vpc_resources ? 1 : 0
+  
+  subnet_id      = local.public_subnet_b_id
+  route_table_id = local.public_route_table_id
 }
 
 # NAT for private subnets — place NAT GW in a STANDARD AZ public subnet

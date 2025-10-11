@@ -37,17 +37,29 @@ resource "aws_ecs_cluster" "main" {
   tags = local.tags
 }
 
-# CloudWatch log groups
+# CloudWatch log groups - using count to conditionally create
 resource "aws_cloudwatch_log_group" "backend" {
+  # Only create if it doesn't exist already
+  count = var.create_cloudwatch_log_groups ? 1 : 0
+  
   name              = "/ecs/${local.app}-${local.env}-backend"
   retention_in_days = 14
   tags              = local.tags
 }
 
 resource "aws_cloudwatch_log_group" "frontend" {
+  # Only create if it doesn't exist already
+  count = var.create_cloudwatch_log_groups ? 1 : 0
+  
   name              = "/ecs/${local.app}-${local.env}-frontend"
   retention_in_days = 14
   tags              = local.tags
+}
+
+# Local values for CloudWatch log group names, used regardless of whether we create them
+locals {
+  backend_log_group_name  = "/ecs/${local.app}-${local.env}-backend"
+  frontend_log_group_name = "/ecs/${local.app}-${local.env}-frontend"
 }
 
 # Task definitions
@@ -76,7 +88,7 @@ resource "aws_ecs_task_definition" "backend" {
       logConfiguration = {
         logDriver = "awslogs",
         options = {
-          awslogs-group         = aws_cloudwatch_log_group.backend.name,
+          awslogs-group         = local.backend_log_group_name,
           awslogs-region        = var.aws_region,
           awslogs-stream-prefix = "ecs"
         }
@@ -121,7 +133,7 @@ resource "aws_ecs_task_definition" "frontend" {
       logConfiguration = {
         logDriver = "awslogs",
         options = {
-          awslogs-group         = aws_cloudwatch_log_group.frontend.name,
+          awslogs-group         = local.frontend_log_group_name,
           awslogs-region        = var.aws_region,
           awslogs-stream-prefix = "ecs"
         }

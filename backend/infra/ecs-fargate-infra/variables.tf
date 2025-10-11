@@ -46,6 +46,31 @@ variable "frontend_container_port" {
   default = 3000
 }
 
+# Control resource creation
+variable "create_cloudwatch_log_groups" {
+  type        = bool
+  default     = true
+  description = "Whether to create CloudWatch log groups or assume they already exist"
+}
+
+variable "create_vpc_resources" {
+  type        = bool
+  default     = true
+  description = "Whether to create VPC and related resources or assume they already exist"
+}
+
+variable "create_alb_resources" {
+  type        = bool
+  default     = true
+  description = "Whether to create ALB and related resources or assume they already exist"
+}
+
+variable "create_iam_resources" {
+  type        = bool
+  default     = true
+  description = "Whether to create IAM roles and policies or assume they already exist"
+}
+
 # Health check paths (change if your backend uses /api/health)
 variable "backend_health_check_path" {
   type    = string
