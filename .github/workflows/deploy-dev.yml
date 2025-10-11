@@ -70,23 +70,55 @@ jobs:
         with:
           terraform_version: 1.7.5
 
-      # Clean up all CloudWatch logs
+      # Clean up all CloudWatch logs with improved error handling
       - name: Clean up CloudWatch logs
         run: |
           echo "🧹 Cleaning up CloudWatch log groups..."
-          # Delete backend log group
-          aws logs delete-log-group --log-group-name "/ecs/transinia-dev-backend" || true
-          # Delete frontend log group
-          aws logs delete-log-group --log-group-name "/ecs/transinia-dev-frontend" || true
           
-          # Check for any other log groups with prefix and delete them
-          LOG_GROUPS=$(aws logs describe-log-groups --log-group-name-prefix "/ecs/transinia-dev" --query "logGroups[*].logGroupName" --output json)
-          if [ "$LOG_GROUPS" != "[]" ]; then
-            for LOG_GROUP in $(echo $LOG_GROUPS | jq -r '.[]'); do
+          # Function to safely delete a log group if it exists
+          function safe_delete_log_group() {
+            local log_group_name="$1"
+            if aws logs describe-log-groups --log-group-name-prefix "$log_group_name" --query "logGroups[?logGroupName=='$log_group_name'].logGroupName" --output text | grep -q "$log_group_name"; then
+              echo "Deleting log group: $log_group_name"
+              aws logs delete-log-group --log-group-name "$log_group_name"
+              echo "Successfully deleted log group: $log_group_name"
+            else
+              echo "Log group does not exist, skipping: $log_group_name"
+            fi
+          }
+          
+          # Delete specific log groups
+          safe_delete_log_group "/ecs/transinia-dev-backend"
+          safe_delete_log_group "/ecs/transinia-dev-frontend"
+          
+          # Find and delete all other log groups with prefix
+          echo "Searching for additional log groups with prefix '/ecs/transinia-dev'..."
+          LOG_GROUPS=$(aws logs describe-log-groups --log-group-name-prefix "/ecs/transinia-dev" --query "logGroups[*].logGroupName" --output text)
+          
+          if [ -n "$LOG_GROUPS" ]; then
+            echo "Found additional log groups to delete"
+            for LOG_GROUP in $LOG_GROUPS; do
               echo "Deleting log group: $LOG_GROUP"
-              aws logs delete-log-group --log-group-name "$LOG_GROUP" || true
+              aws logs delete-log-group --log-group-name "$LOG_GROUP"
+              echo "Successfully deleted log group: $LOG_GROUP"
+            done
+          else
+            echo "No additional log groups found"
+          fi
+          
+          # Check for any other application-related log groups
+          echo "Checking for any other application log groups..."
+          APP_LOG_GROUPS=$(aws logs describe-log-groups --log-group-name-prefix "/aws/lambda/transinia" --query "logGroups[*].logGroupName" --output text)
+          
+          if [ -n "$APP_LOG_GROUPS" ]; then
+            echo "Found application lambda log groups to delete"
+            for LOG_GROUP in $APP_LOG_GROUPS; do
+              echo "Deleting log group: $LOG_GROUP"
+              aws logs delete-log-group --log-group-name "$LOG_GROUP"
+              echo "Successfully deleted log group: $LOG_GROUP"
             done
           fi
+          
           echo "✅ CloudWatch log cleanup complete"
 
       # Clean up ECS resources
@@ -481,32 +513,49 @@ jobs:
               done
             fi
             
-            # Step 2: List and detach managed policies
-            ATTACHED_POLICIES=$(aws iam list-attached-role-policies --role-name "transinia-dev-ecsTaskRole" --query "AttachedPolicies[*].PolicyArn" --output text)
+            # Step 2: List and detach managed policies with better error handling
+            echo "Finding and removing attached policies from task role..."
+            ATTACHED_POLICIES=$(aws iam list-attached-role-policies --role-name "transinia-dev-ecsTaskRole" --query "AttachedPolicies[*].PolicyArn" --output text 2>/dev/null || echo "")
             if [ -n "$ATTACHED_POLICIES" ]; then
               for POLICY in $ATTACHED_POLICIES; do
                 echo "Detaching policy: $POLICY"
-                aws iam detach-role-policy --role-name "transinia-dev-ecsTaskRole" --policy-arn $POLICY || true
-                sleep 1
+                aws iam detach-role-policy --role-name "transinia-dev-ecsTaskRole" --policy-arn "$POLICY" || true
+                sleep 2
               done
+            else
+              echo "No attached policies found on task role"
             fi
             
-            # Step 3: List and delete inline policies
-            INLINE_POLICIES=$(aws iam list-role-policies --role-name "transinia-dev-ecsTaskRole" --query "PolicyNames" --output text)
+            # Step 3: List and delete inline policies with better error handling
+            echo "Finding and removing inline policies..."
+            INLINE_POLICIES=$(aws iam list-role-policies --role-name "transinia-dev-ecsTaskRole" --query "PolicyNames" --output text 2>/dev/null || echo "")
             if [ -n "$INLINE_POLICIES" ]; then
               for POLICY in $INLINE_POLICIES; do
                 echo "Deleting inline policy: $POLICY"
-                aws iam delete-role-policy --role-name "transinia-dev-ecsTaskRole" --policy-name $POLICY || true
-                sleep 1
+                aws iam delete-role-policy --role-name "transinia-dev-ecsTaskRole" --policy-name "$POLICY" || true
+                sleep 2
               done
+            else
+              echo "No inline policies found"
             fi
             
-            # Step 4: Delete the role with multiple retries in case of dependency issues
+            # Step 4: Delete the role with improved error handling and multiple retries
             echo "Deleting task role..."
+            
+            # Wait a moment for policy detachments to complete
+            sleep 5
+            
             MAX_RETRIES=5
             for ((i=1; i<=MAX_RETRIES; i++)); do
-              aws iam delete-role --role-name "transinia-dev-ecsTaskRole" && break || echo "Delete attempt $i/$MAX_RETRIES failed, retrying in 10 seconds..."
-              sleep 10
+              # Check if the role still exists
+              if aws iam get-role --role-name "transinia-dev-ecsTaskRole" &>/dev/null; then
+                echo "Attempt $i/$MAX_RETRIES: Deleting role 'transinia-dev-ecsTaskRole'..."
+                aws iam delete-role --role-name "transinia-dev-ecsTaskRole" && { echo "Role successfully deleted"; break; } || echo "Delete attempt $i/$MAX_RETRIES failed, retrying in 15 seconds..."
+                sleep 15
+              else
+                echo "Role 'transinia-dev-ecsTaskRole' no longer exists, moving on"
+                break
+              fi
             done
           fi
           
@@ -535,22 +584,36 @@ jobs:
               done
             fi
             
-            # Step 3: List and delete inline policies
-            INLINE_POLICIES=$(aws iam list-role-policies --role-name "transinia-dev-ecsTaskExecutionRole" --query "PolicyNames" --output text)
+            # Step 3: List and delete inline policies with better error handling
+            echo "Finding and removing inline policies..."
+            INLINE_POLICIES=$(aws iam list-role-policies --role-name "transinia-dev-ecsTaskExecutionRole" --query "PolicyNames" --output text 2>/dev/null || echo "")
             if [ -n "$INLINE_POLICIES" ]; then
               for POLICY in $INLINE_POLICIES; do
                 echo "Deleting inline policy: $POLICY"
-                aws iam delete-role-policy --role-name "transinia-dev-ecsTaskExecutionRole" --policy-name $POLICY || true
-                sleep 1
+                aws iam delete-role-policy --role-name "transinia-dev-ecsTaskExecutionRole" --policy-name "$POLICY" || true
+                sleep 2
               done
+            else
+              echo "No inline policies found"
             fi
             
-            # Step 4: Delete the role with multiple retries
+            # Step 4: Delete the role with improved error handling and multiple retries
             echo "Deleting execution role..."
+            
+            # Wait a moment for policy detachments to complete
+            sleep 5
+            
             MAX_RETRIES=5
             for ((i=1; i<=MAX_RETRIES; i++)); do
-              aws iam delete-role --role-name "transinia-dev-ecsTaskExecutionRole" && break || echo "Delete attempt $i/$MAX_RETRIES failed, retrying in 10 seconds..."
-              sleep 10
+              # Check if the role still exists
+              if aws iam get-role --role-name "transinia-dev-ecsTaskExecutionRole" &>/dev/null; then
+                echo "Attempt $i/$MAX_RETRIES: Deleting role 'transinia-dev-ecsTaskExecutionRole'..."
+                aws iam delete-role --role-name "transinia-dev-ecsTaskExecutionRole" && { echo "Role successfully deleted"; break; } || echo "Delete attempt $i/$MAX_RETRIES failed, retrying in 15 seconds..."
+                sleep 15
+              else
+                echo "Role 'transinia-dev-ecsTaskExecutionRole' no longer exists, moving on"
+                break
+              fi
             done
           fi
           echo "✅ IAM roles cleanup complete"
@@ -574,4 +637,4 @@ jobs:
           echo "✅ IAM Roles: transinia-dev-ecsTaskRole, transinia-dev-ecsTaskExecutionRole"
           echo ""
           echo "🚀 Infrastructure destruction completed!"
-          echo "==================================================
+          echo "=================================================="
