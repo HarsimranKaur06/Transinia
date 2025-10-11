@@ -1,7 +1,9 @@
 resource "aws_security_group" "tasks" {
+  count = var.create_security_groups ? 1 : 0
+  
   name        = "${local.app}-${local.env}-tasks-sg"
   description = "Allow ALB to reach tasks"
-  vpc_id      = aws_vpc.main.id
+  vpc_id      = local.vpc_id
   tags        = local.tags
 
   egress {
@@ -12,29 +14,61 @@ resource "aws_security_group" "tasks" {
   }
 }
 
+# Data source for existing security group
+data "aws_security_group" "tasks" {
+  count = var.create_security_groups ? 0 : 1
+  
+  name   = "${local.app}-${local.env}-tasks-sg"
+  vpc_id = local.vpc_id
+}
+
+# Local value for security group ID
+locals {
+  tasks_security_group_id = var.create_security_groups ? aws_security_group.tasks[0].id : data.aws_security_group.tasks[0].id
+}
+
 # Allow ALB to connect to backend
 resource "aws_security_group_rule" "alb_to_backend" {
   type                     = "ingress"
-  security_group_id        = aws_security_group.tasks.id
+  security_group_id        = aws_security_group.tasks[0].id
   from_port                = var.backend_container_port
   to_port                  = var.backend_container_port
   protocol                 = "tcp"
-  source_security_group_id = aws_security_group.alb.id
+  source_security_group_id = aws_security_group.alb[0].id
 }
 
 # Allow ALB to connect to frontend
 resource "aws_security_group_rule" "alb_to_frontend" {
   type                     = "ingress"
-  security_group_id        = aws_security_group.tasks.id
+  security_group_id        = aws_security_group.tasks[0].id
   from_port                = var.frontend_container_port
   to_port                  = var.frontend_container_port
   protocol                 = "tcp"
-  source_security_group_id = aws_security_group.alb.id
+  source_security_group_id = aws_security_group.alb[0].id
 }
 
 resource "aws_ecs_cluster" "main" {
   name = "${local.app}-${local.env}-cluster"
   tags = local.tags
+}
+
+# Data sources for task definitions
+data "aws_ecs_task_definition" "backend" {
+  count = var.create_iam_resources ? 0 : 1
+  
+  task_definition = "${local.app}-${local.env}-backend"
+}
+
+data "aws_ecs_task_definition" "frontend" {
+  count = var.create_iam_resources ? 0 : 1
+  
+  task_definition = "${local.app}-${local.env}-frontend"
+}
+
+# Local values for task definition ARNs
+locals {
+  backend_task_definition_arn = var.create_iam_resources ? aws_ecs_task_definition.backend[0].arn : data.aws_ecs_task_definition.backend[0].arn
+  frontend_task_definition_arn = var.create_iam_resources ? aws_ecs_task_definition.frontend[0].arn : data.aws_ecs_task_definition.frontend[0].arn
 }
 
 # CloudWatch log groups - using count to conditionally create
@@ -64,13 +98,15 @@ locals {
 
 # Task definitions
 resource "aws_ecs_task_definition" "backend" {
+  count = var.create_iam_resources ? 1 : 0
+  
   family                   = "${local.app}-${local.env}-backend"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
   cpu                      = "512"
   memory                   = "1024"
-  execution_role_arn       = aws_iam_role.ecs_task_execution.arn
-  task_role_arn            = aws_iam_role.ecs_task_role.arn
+  execution_role_arn       = local.ecs_task_execution_role_arn
+  task_role_arn            = local.ecs_task_role_arn
 
   runtime_platform {
     operating_system_family = "LINUX"
@@ -109,13 +145,15 @@ resource "aws_ecs_task_definition" "backend" {
 }
 
 resource "aws_ecs_task_definition" "frontend" {
+  count = var.create_iam_resources ? 1 : 0
+  
   family                   = "${local.app}-${local.env}-frontend"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
   cpu                      = "256"
   memory                   = "512"
-  execution_role_arn       = aws_iam_role.ecs_task_execution.arn
-  task_role_arn            = aws_iam_role.ecs_task_role.arn
+  execution_role_arn       = local.ecs_task_execution_role_arn
+  task_role_arn            = local.ecs_task_role_arn
 
   runtime_platform {
     operating_system_family = "LINUX"
@@ -146,49 +184,47 @@ resource "aws_ecs_task_definition" "frontend" {
 resource "aws_ecs_service" "backend" {
   name             = "${local.app}-${local.env}-backend-service"
   cluster          = aws_ecs_cluster.main.id
-  task_definition  = aws_ecs_task_definition.backend.arn
+  task_definition  = local.backend_task_definition_arn
   desired_count    = var.backend_desired_count
   launch_type      = "FARGATE"
   platform_version = "1.4.0"
 
   network_configuration {
-    subnets          = [aws_subnet.private_a.id, aws_subnet.private_b.id]
-    security_groups  = [aws_security_group.tasks.id]
+    subnets          = local.private_subnet_ids
+    security_groups  = [local.tasks_security_group_id]
     assign_public_ip = false
   }
 
 
   load_balancer {
-    target_group_arn = aws_lb_target_group.backend.arn
+    target_group_arn = local.backend_target_group_arn
     container_name   = "meeting-bot"
     container_port   = var.backend_container_port
   }
 
-  depends_on = [aws_lb_listener.http]
   tags       = local.tags
 }
 
 resource "aws_ecs_service" "frontend" {
   name             = "${local.app}-${local.env}-frontend-service"
   cluster          = aws_ecs_cluster.main.id
-  task_definition  = aws_ecs_task_definition.frontend.arn
+  task_definition  = local.frontend_task_definition_arn
   desired_count    = var.frontend_desired_count
   launch_type      = "FARGATE"
   platform_version = "1.4.0"
 
   network_configuration {
-    subnets          = [aws_subnet.private_a.id, aws_subnet.private_b.id]
-    security_groups  = [aws_security_group.tasks.id]
+    subnets          = local.private_subnet_ids
+    security_groups  = [local.tasks_security_group_id]
     assign_public_ip = false
   }
 
 
   load_balancer {
-    target_group_arn = aws_lb_target_group.frontend.arn
+    target_group_arn = local.frontend_target_group_arn
     container_name   = "frontend"
     container_port   = var.frontend_container_port
   }
 
-  depends_on = [aws_lb_listener.http]
   tags       = local.tags
 }

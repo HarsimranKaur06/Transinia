@@ -71,6 +71,12 @@ variable "create_iam_resources" {
   description = "Whether to create IAM roles and policies or assume they already exist"
 }
 
+variable "create_security_groups" {
+  type        = bool
+  default     = true
+  description = "Whether to create security groups or assume they already exist"
+}
+
 # Health check paths (change if your backend uses /api/health)
 variable "backend_health_check_path" {
   type    = string

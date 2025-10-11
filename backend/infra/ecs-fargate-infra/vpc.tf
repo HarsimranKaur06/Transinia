@@ -140,49 +140,106 @@ resource "aws_route_table_association" "public_assoc_b" {
 
 # NAT for private subnets — place NAT GW in a STANDARD AZ public subnet
 resource "aws_eip" "nat" {
+  count = var.create_vpc_resources ? 1 : 0
+  
   domain     = "vpc"
   depends_on = [aws_internet_gateway.igw]
   tags       = merge(local.tags, { Name = "${local.app}-${local.env}-nat-eip" })
 }
 
 resource "aws_nat_gateway" "nat" {
-  allocation_id = aws_eip.nat.id
-  subnet_id     = aws_subnet.public_a.id
+  count = var.create_vpc_resources ? 1 : 0
+  
+  allocation_id = aws_eip.nat[0].id
+  subnet_id     = local.public_subnet_a_id
   tags          = merge(local.tags, { Name = "${local.app}-${local.env}-nat" })
 }
 
 # PRIVATE SUBNETS (2) — pinned to the same two standard AZs
 resource "aws_subnet" "private_a" {
-  vpc_id            = aws_vpc.main.id
+  count = var.create_vpc_resources ? 1 : 0
+  
+  vpc_id            = local.vpc_id
   cidr_block        = local.private_cidrs[0]
   availability_zone = local.azs_std[0]
   tags              = merge(local.tags, { Name = "${local.app}-${local.env}-private-1" })
 }
 
 resource "aws_subnet" "private_b" {
-  vpc_id            = aws_vpc.main.id
+  count = var.create_vpc_resources ? 1 : 0
+  
+  vpc_id            = local.vpc_id
   cidr_block        = local.private_cidrs[1]
   availability_zone = local.azs_std[1]
   tags              = merge(local.tags, { Name = "${local.app}-${local.env}-private-2" })
 }
 
+# Data sources to fetch existing private subnets if not creating them
+data "aws_subnet" "private_a" {
+  count = var.create_vpc_resources ? 0 : 1
+  
+  filter {
+    name   = "tag:Name"
+    values = ["${local.app}-${local.env}-private-1"]
+  }
+}
+
+data "aws_subnet" "private_b" {
+  count = var.create_vpc_resources ? 0 : 1
+  
+  filter {
+    name   = "tag:Name"
+    values = ["${local.app}-${local.env}-private-2"]
+  }
+}
+
+# Local values for private subnet IDs
+locals {
+  private_subnet_a_id = var.create_vpc_resources ? aws_subnet.private_a[0].id : data.aws_subnet.private_a[0].id
+  private_subnet_b_id = var.create_vpc_resources ? aws_subnet.private_b[0].id : data.aws_subnet.private_b[0].id
+  private_subnet_ids  = [local.private_subnet_a_id, local.private_subnet_b_id]
+}
+
 resource "aws_route_table" "private" {
-  vpc_id = aws_vpc.main.id
+  count = var.create_vpc_resources ? 1 : 0
+  
+  vpc_id = local.vpc_id
   tags   = merge(local.tags, { Name = "${local.app}-${local.env}-private-rt" })
 }
 
+# Data source for existing private route table
+data "aws_route_table" "private" {
+  count = var.create_vpc_resources ? 0 : 1
+  
+  filter {
+    name   = "tag:Name"
+    values = ["${local.app}-${local.env}-private-rt"]
+  }
+}
+
+# Local value for private route table ID
+locals {
+  private_route_table_id = var.create_vpc_resources ? aws_route_table.private[0].id : data.aws_route_table.private[0].id
+}
+
 resource "aws_route" "private_nat" {
-  route_table_id         = aws_route_table.private.id
+  count = var.create_vpc_resources ? 1 : 0
+  
+  route_table_id         = local.private_route_table_id
   destination_cidr_block = "0.0.0.0/0"
-  nat_gateway_id         = aws_nat_gateway.nat.id
+  nat_gateway_id         = aws_nat_gateway.nat[0].id
 }
 
 resource "aws_route_table_association" "private_assoc_a" {
-  subnet_id      = aws_subnet.private_a.id
-  route_table_id = aws_route_table.private.id
+  count = var.create_vpc_resources ? 1 : 0
+  
+  subnet_id      = local.private_subnet_a_id
+  route_table_id = local.private_route_table_id
 }
 
 resource "aws_route_table_association" "private_assoc_b" {
-  subnet_id      = aws_subnet.private_b.id
-  route_table_id = aws_route_table.private.id
+  count = var.create_vpc_resources ? 1 : 0
+  
+  subnet_id      = local.private_subnet_b_id
+  route_table_id = local.private_route_table_id
 }
