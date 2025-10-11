@@ -52,6 +52,8 @@ resource "aws_ecs_cluster" "main" {
   tags = local.tags
 }
 
+# We don't need to make the cluster conditional as it's lightweight and always needed
+
 # Data sources for task definitions
 data "aws_ecs_task_definition" "backend" {
   count = var.create_iam_resources ? 0 : 1
@@ -182,6 +184,8 @@ resource "aws_ecs_task_definition" "frontend" {
 
 # Services
 resource "aws_ecs_service" "backend" {
+  count = 1 # We don't need to make this conditional as the task definition handles IAM conditionals
+  
   name             = "${local.app}-${local.env}-backend-service"
   cluster          = aws_ecs_cluster.main.id
   task_definition  = local.backend_task_definition_arn
@@ -206,6 +210,8 @@ resource "aws_ecs_service" "backend" {
 }
 
 resource "aws_ecs_service" "frontend" {
+  count = 1 # We don't need to make this conditional as the task definition handles IAM conditionals
+  
   name             = "${local.app}-${local.env}-frontend-service"
   cluster          = aws_ecs_cluster.main.id
   task_definition  = local.frontend_task_definition_arn
