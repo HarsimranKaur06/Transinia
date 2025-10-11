@@ -40,10 +40,11 @@ jobs:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
-          
+
       - name: Display destruction warning
         run: |
-          echo "⚠️ WARNING: This workflow will DESTROY ALL INFRASTRUCTURE created for the ${{ env.ENVIRONMENT }} environment ⚠️"
+          set -Eeuo pipefail
+          echo "WARNING: This workflow will DESTROY ALL INFRASTRUCTURE created for the ${{ env.ENVIRONMENT }} environment"
           echo "Resources to be destroyed include:"
           echo "- ECS clusters, services, and tasks"
           echo "- Load balancers and target groups"
@@ -64,18 +65,22 @@ jobs:
             echo "Running via push trigger. Proceeding with resource cleanup..."
           fi
 
-      # Set up Terraform
+      - name: Ensure jq is installed
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y jq
+
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.7.5
 
-      # Clean up all CloudWatch logs with improved error handling
       - name: Clean up CloudWatch logs
         run: |
-          echo "🧹 Cleaning up CloudWatch log groups..."
+          set -Eeuo pipefail
+          echo "Cleaning up CloudWatch log groups..."
           
-          # Function to safely delete a log group if it exists
           function safe_delete_log_group() {
             local log_group_name="$1"
             if aws logs describe-log-groups --log-group-name-prefix "$log_group_name" --query "logGroups[?logGroupName=='$log_group_name'].logGroupName" --output text | grep -q "$log_group_name"; then
@@ -87,153 +92,134 @@ jobs:
             fi
           }
           
-          # Delete specific log groups
           safe_delete_log_group "/ecs/transinia-dev-backend"
           safe_delete_log_group "/ecs/transinia-dev-frontend"
           
-          # Find and delete all other log groups with prefix
           echo "Searching for additional log groups with prefix '/ecs/transinia-dev'..."
           LOG_GROUPS=$(aws logs describe-log-groups --log-group-name-prefix "/ecs/transinia-dev" --query "logGroups[*].logGroupName" --output text)
           
-          if [ -n "$LOG_GROUPS" ]; then
+          if [ -n "${LOG_GROUPS}" ]; then
             echo "Found additional log groups to delete"
-            for LOG_GROUP in $LOG_GROUPS; do
-              echo "Deleting log group: $LOG_GROUP"
-              aws logs delete-log-group --log-group-name "$LOG_GROUP"
-              echo "Successfully deleted log group: $LOG_GROUP"
+            for LOG_GROUP in ${LOG_GROUPS}; do
+              echo "Deleting log group: ${LOG_GROUP}"
+              aws logs delete-log-group --log-group-name "${LOG_GROUP}"
+              echo "Successfully deleted log group: ${LOG_GROUP}"
             done
           else
             echo "No additional log groups found"
           fi
           
-          # Check for any other application-related log groups
           echo "Checking for any other application log groups..."
           APP_LOG_GROUPS=$(aws logs describe-log-groups --log-group-name-prefix "/aws/lambda/transinia" --query "logGroups[*].logGroupName" --output text)
           
-          if [ -n "$APP_LOG_GROUPS" ]; then
+          if [ -n "${APP_LOG_GROUPS}" ]; then
             echo "Found application lambda log groups to delete"
-            for LOG_GROUP in $APP_LOG_GROUPS; do
-              echo "Deleting log group: $LOG_GROUP"
-              aws logs delete-log-group --log-group-name "$LOG_GROUP"
-              echo "Successfully deleted log group: $LOG_GROUP"
+            for LOG_GROUP in ${APP_LOG_GROUPS}; do
+              echo "Deleting log group: ${LOG_GROUP}"
+              aws logs delete-log-group --log-group-name "${LOG_GROUP}"
+              echo "Successfully deleted log group: ${LOG_GROUP}"
             done
           fi
           
-          echo "✅ CloudWatch log cleanup complete"
+          echo "CloudWatch log cleanup complete"
 
-      # Clean up ECS resources
       - name: Clean up ECS resources
         run: |
-          echo "🧹 Cleaning up ECS resources..."
+          set -Eeuo pipefail
+          echo "Cleaning up ECS resources..."
           
-          # Check if cluster exists
           CLUSTER_EXISTS=$(aws ecs describe-clusters --clusters ${{ env.CLUSTER_NAME }} --query "clusters[0].status" --output text 2>/dev/null || echo "NOT_FOUND")
           
-          if [ "$CLUSTER_EXISTS" != "NOT_FOUND" ]; then
+          if [ "${CLUSTER_EXISTS}" != "NOT_FOUND" ]; then
             echo "ECS Cluster ${{ env.CLUSTER_NAME }} exists. Cleaning up resources..."
             
-            # 1. Check and stop any running tasks
             echo "Checking for running tasks..."
             RUNNING_TASKS=$(aws ecs list-tasks --cluster ${{ env.CLUSTER_NAME }} --desired-status RUNNING --query "taskArns[*]" --output text)
-            
-            if [ -n "$RUNNING_TASKS" ]; then
+            if [ -n "${RUNNING_TASKS}" ]; then
               echo "Found running tasks. Stopping them..."
-              for TASK in $RUNNING_TASKS; do
-                echo "Stopping task: $TASK"
-                aws ecs stop-task --cluster ${{ env.CLUSTER_NAME }} --task $TASK || true
+              for TASK in ${RUNNING_TASKS}; do
+                echo "Stopping task: ${TASK}"
+                aws ecs stop-task --cluster ${{ env.CLUSTER_NAME }} --task "${TASK}" || true
               done
               echo "Waiting for tasks to stop..."
               sleep 30
             fi
             
-            # 2. Check and delete services
             echo "Checking for ECS services..."
             SERVICES=$(aws ecs list-services --cluster ${{ env.CLUSTER_NAME }} --query "serviceArns" --output text)
-            
-            if [ -n "$SERVICES" ]; then
+            if [ -n "${SERVICES}" ]; then
               echo "Found services. Updating desired count to 0..."
-              for SERVICE in $SERVICES; do
-                echo "Updating service: $SERVICE"
-                aws ecs update-service --cluster ${{ env.CLUSTER_NAME }} --service $SERVICE --desired-count 0 || true
+              for SERVICE in ${SERVICES}; do
+                echo "Updating service: ${SERVICE}"
+                aws ecs update-service --cluster ${{ env.CLUSTER_NAME }} --service "${SERVICE}" --desired-count 0 || true
               done
-              
               echo "Waiting for services to scale down..."
               sleep 30
               
               echo "Deleting services..."
-              for SERVICE in $SERVICES; do
-                echo "Deleting service: $SERVICE"
-                aws ecs delete-service --cluster ${{ env.CLUSTER_NAME }} --service $SERVICE --force || true
+              for SERVICE in ${SERVICES}; do
+                echo "Deleting service: ${SERVICE}"
+                aws ecs delete-service --cluster ${{ env.CLUSTER_NAME }} --service "${SERVICE}" --force || true
               done
-              
               echo "Waiting for services to be deleted..."
               sleep 30
             fi
             
-            # 3. Delete the cluster
             echo "Deleting ECS cluster: ${{ env.CLUSTER_NAME }}"
             aws ecs delete-cluster --cluster ${{ env.CLUSTER_NAME }} || true
           else
             echo "ECS Cluster ${{ env.CLUSTER_NAME }} not found."
           fi
           
-          # 4. Clean up task definitions
           echo "Cleaning up task definitions..."
           TASK_DEFS=$(aws ecs list-task-definitions --family-prefix "transinia-dev" --status ACTIVE --query "taskDefinitionArns" --output json)
-          
-          if [ "$TASK_DEFS" != "[]" ]; then
-            for TASK_DEF in $(echo $TASK_DEFS | jq -r '.[]'); do
-              echo "Deregistering task definition: $TASK_DEF"
-              aws ecs deregister-task-definition --task-definition $TASK_DEF || true
+          if [ "${TASK_DEFS}" != "[]" ]; then
+            for TASK_DEF in $(echo "${TASK_DEFS}" | jq -r '.[]'); do
+              echo "Deregistering task definition: ${TASK_DEF}"
+              aws ecs deregister-task-definition --task-definition "${TASK_DEF}" || true
             done
           fi
-          echo "✅ ECS resource cleanup complete"
+          echo "ECS resource cleanup complete"
 
-      # Clean up ALB and networking resources
       - name: Clean up load balancer and networking resources
         run: |
-          echo "🧹 Cleaning up load balancer and networking resources..."
+          set -Eeuo pipefail
+          echo "Cleaning up load balancer and networking resources..."
           
-          # Check if ALB exists
           ALB_NAME="transinia-dev-alb"
-          ALB_ARN=$(aws elbv2 describe-load-balancers --names $ALB_NAME --query "LoadBalancers[0].LoadBalancerArn" --output text 2>/dev/null || echo "NOT_FOUND")
+          ALB_ARN=$(aws elbv2 describe-load-balancers --names "${ALB_NAME}" --query "LoadBalancers[0].LoadBalancerArn" --output text 2>/dev/null || echo "NOT_FOUND")
           
-          if [ "$ALB_ARN" != "NOT_FOUND" ]; then
+          if [ "${ALB_ARN}" != "NOT_FOUND" ]; then
             echo "Found ALB. Cleaning up related resources..."
             
-            # Delete listeners first
-            LISTENERS=$(aws elbv2 describe-listeners --load-balancer-arn $ALB_ARN --query "Listeners[*].ListenerArn" --output text)
-            if [ -n "$LISTENERS" ]; then
-              for LISTENER in $LISTENERS; do
-                echo "Deleting listener: $LISTENER"
-                aws elbv2 delete-listener --listener-arn $LISTENER || true
+            LISTENERS=$(aws elbv2 describe-listeners --load-balancer-arn "${ALB_ARN}" --query "Listeners[*].ListenerArn" --output text)
+            if [ -n "${LISTENERS}" ]; then
+              for LISTENER in ${LISTENERS}; do
+                echo "Deleting listener: ${LISTENER}"
+                aws elbv2 delete-listener --listener-arn "${LISTENER}" || true
               done
               echo "Waiting for listeners to be deleted..."
               sleep 10
             fi
             
-            # Get target groups before deleting ALB
-            TARGET_GROUPS=$(aws elbv2 describe-target-groups --load-balancer-arn $ALB_ARN --query "TargetGroups[*].TargetGroupArn" --output text)
+            TARGET_GROUPS=$(aws elbv2 describe-target-groups --load-balancer-arn "${ALB_ARN}" --query "TargetGroups[*].TargetGroupArn" --output text)
             
-            # Delete ALB
-            echo "Deleting ALB: $ALB_NAME"
-            aws elbv2 delete-load-balancer --load-balancer-arn $ALB_ARN || true
+            echo "Deleting ALB: ${ALB_NAME}"
+            aws elbv2 delete-load-balancer --load-balancer-arn "${ALB_ARN}" || true
             echo "Waiting for ALB to be deleted..."
             sleep 60
             
-            # Now delete target groups
-            if [ -n "$TARGET_GROUPS" ]; then
-              for TG in $TARGET_GROUPS; do
-                echo "Deleting target group: $TG"
-                aws elbv2 delete-target-group --target-group-arn $TG || true
+            if [ -n "${TARGET_GROUPS}" ]; then
+              for TG in ${TARGET_GROUPS}; do
+                echo "Deleting target group: ${TG}"
+                aws elbv2 delete-target-group --target-group-arn "${TG}" || true
               done
             fi
           else
             echo "ALB not found."
           fi
-          echo "✅ Load balancer cleanup complete"
+          echo "Load balancer cleanup complete"
       
-      # Destroy DynamoDB infrastructure
       - name: Destroy DynamoDB infrastructure
         working-directory: ./backend/infra/dynamodb-infra
         env:
@@ -241,29 +227,25 @@ jobs:
           TF_VAR_dynamodb_table_meetings: ${{ secrets.DEV_DYNAMODB_TABLE_MEETINGS_BASE }}
           TF_VAR_dynamodb_table_actions: ${{ secrets.DEV_DYNAMODB_TABLE_ACTIONS_BASE }}
         run: |
-          echo "🧹 Destroying DynamoDB tables..."
+          set -Eeuo pipefail
+          echo "Destroying DynamoDB tables..."
           
-          # Initialize Terraform
           terraform init -upgrade
           
-          # Check if DynamoDB tables exist
           MEETINGS_TABLE="transinia-dev-${{ secrets.DEV_DYNAMODB_TABLE_MEETINGS_BASE }}"
           ACTIONS_TABLE="transinia-dev-${{ secrets.DEV_DYNAMODB_TABLE_ACTIONS_BASE }}"
           
-          MEETINGS_EXISTS=$(aws dynamodb describe-table --table-name "$MEETINGS_TABLE" --query "Table.TableName" --output text 2>/dev/null || echo "NOT_FOUND")
-          ACTIONS_EXISTS=$(aws dynamodb describe-table --table-name "$ACTIONS_TABLE" --query "Table.TableName" --output text 2>/dev/null || echo "NOT_FOUND")
+          MEETINGS_EXISTS=$(aws dynamodb describe-table --table-name "${MEETINGS_TABLE}" --query "Table.TableName" --output text 2>/dev/null || echo "NOT_FOUND")
+          ACTIONS_EXISTS=$(aws dynamodb describe-table --table-name "${ACTIONS_TABLE}" --query "Table.TableName" --output text 2>/dev/null || echo "NOT_FOUND")
           
-          # If tables exist, destroy them
-          if [ "$MEETINGS_EXISTS" != "NOT_FOUND" ] || [ "$ACTIONS_EXISTS" != "NOT_FOUND" ]; then
+          if [ "${MEETINGS_EXISTS}" != "NOT_FOUND" ] || [ "${ACTIONS_EXISTS}" != "NOT_FOUND" ]; then
             echo "DynamoDB tables exist. Destroying infrastructure..."
-            # Suppress errors if destroy fails
             terraform destroy -auto-approve || true
           else
             echo "No DynamoDB tables found."
           fi
-          echo "✅ DynamoDB cleanup complete"
+          echo "DynamoDB cleanup complete"
           
-      # Destroy S3 bucket infrastructure
       - name: Destroy S3 bucket infrastructure
         working-directory: ./backend/infra/s3-bucket-infra
         env:
@@ -271,283 +253,278 @@ jobs:
           TF_VAR_s3_bucket_raw: ${{ secrets.DEV_S3_BUCKET_RAW_BASE }}
           TF_VAR_s3_bucket_processed: ${{ secrets.DEV_S3_BUCKET_PROCESSED_BASE }}
         run: |
-          echo "🧹 Destroying S3 buckets..."
+          set -Eeuo pipefail
+          echo "Destroying S3 buckets..."
           
-          # Initialize Terraform
           terraform init -upgrade
           
-          # Define bucket names
           RAW_BUCKET="transinia-dev-${{ secrets.DEV_S3_BUCKET_RAW_BASE }}"
           PROCESSED_BUCKET="transinia-dev-${{ secrets.DEV_S3_BUCKET_PROCESSED_BASE }}"
           
-          # Check if buckets exist
-          RAW_EXISTS=$(aws s3api head-bucket --bucket "$RAW_BUCKET" 2>/dev/null && echo "EXISTS" || echo "NOT_FOUND")
-          PROCESSED_EXISTS=$(aws s3api head-bucket --bucket "$PROCESSED_BUCKET" 2>/dev/null && echo "EXISTS" || echo "NOT_FOUND")
+          RAW_EXISTS=$(aws s3api head-bucket --bucket "${RAW_BUCKET}" 2>/dev/null && echo "EXISTS" || echo "NOT_FOUND")
+          PROCESSED_EXISTS=$(aws s3api head-bucket --bucket "${PROCESSED_BUCKET}" 2>/dev/null && echo "EXISTS" || echo "NOT_FOUND")
           
-          # Empty the buckets first if they exist (S3 buckets must be empty before deletion)
-          if [ "$RAW_EXISTS" = "EXISTS" ]; then
-            echo "Emptying bucket: $RAW_BUCKET"
-            aws s3 rm s3://$RAW_BUCKET --recursive || true
+          if [ "${RAW_EXISTS}" = "EXISTS" ]; then
+            echo "Emptying bucket: ${RAW_BUCKET}"
+            aws s3 rm "s3://${RAW_BUCKET}" --recursive || true
           fi
           
-          if [ "$PROCESSED_EXISTS" = "EXISTS" ]; then
-            echo "Emptying bucket: $PROCESSED_BUCKET"
-            aws s3 rm s3://$PROCESSED_BUCKET --recursive || true
+          if [ "${PROCESSED_EXISTS}" = "EXISTS" ]; then
+            echo "Emptying bucket: ${PROCESSED_BUCKET}"
+            aws s3 rm "s3://${PROCESSED_BUCKET}" --recursive || true
           fi
           
-          # If buckets exist, destroy them
-          if [ "$RAW_EXISTS" = "EXISTS" ] || [ "$PROCESSED_EXISTS" = "EXISTS" ]; then
+          if [ "${RAW_EXISTS}" = "EXISTS" ] || [ "${PROCESSED_EXISTS}" = "EXISTS" ]; then
             echo "S3 buckets exist. Destroying infrastructure..."
-            # Suppress errors if destroy fails
             terraform destroy -auto-approve || true
           else
             echo "No S3 buckets found."
           fi
-          echo "✅ S3 bucket cleanup complete"
+          echo "S3 bucket cleanup complete"
           
-      # Clean up ECR repositories
       - name: Clean up ECR repositories
         run: |
-          echo "🧹 Cleaning up ECR repositories..."
+          set -Eeuo pipefail
+          echo "Cleaning up ECR repositories..."
           
-          # Check if repositories exist
           BACKEND_REPO_EXISTS=$(aws ecr describe-repositories --repository-names ${{ env.BACKEND_ECR_REPO }} --query "repositories[0].repositoryName" --output text 2>/dev/null || echo "NOT_FOUND")
           FRONTEND_REPO_EXISTS=$(aws ecr describe-repositories --repository-names ${{ env.FRONTEND_ECR_REPO }} --query "repositories[0].repositoryName" --output text 2>/dev/null || echo "NOT_FOUND")
           
-          # Delete images from backend repository
-          if [ "$BACKEND_REPO_EXISTS" != "NOT_FOUND" ]; then
+          if [ "${BACKEND_REPO_EXISTS}" != "NOT_FOUND" ]; then
             echo "Deleting images from backend repository..."
-            # Get all image IDs
             IMAGE_IDS=$(aws ecr list-images --repository-name ${{ env.BACKEND_ECR_REPO }} --query 'imageIds[*]' --output json)
-            
-            # Delete images if any exist
-            if [ "$IMAGE_IDS" != "[]" ]; then
-              aws ecr batch-delete-image --repository-name ${{ env.BACKEND_ECR_REPO }} --image-ids "$IMAGE_IDS" || true
+            if [ "${IMAGE_IDS}" != "[]" ]; then
+              aws ecr batch-delete-image --repository-name ${{ env.BACKEND_ECR_REPO }} --image-ids "${IMAGE_IDS}" || true
             fi
-            
-            # Delete repository
             echo "Deleting backend repository..."
             aws ecr delete-repository --repository-name ${{ env.BACKEND_ECR_REPO }} --force || true
           fi
           
-          # Delete images from frontend repository
-          if [ "$FRONTEND_REPO_EXISTS" != "NOT_FOUND" ]; then
+          if [ "${FRONTEND_REPO_EXISTS}" != "NOT_FOUND" ]; then
             echo "Deleting images from frontend repository..."
-            # Get all image IDs
             IMAGE_IDS=$(aws ecr list-images --repository-name ${{ env.FRONTEND_ECR_REPO }} --query 'imageIds[*]' --output json)
-            
-            # Delete images if any exist
-            if [ "$IMAGE_IDS" != "[]" ]; then
-              aws ecr batch-delete-image --repository-name ${{ env.FRONTEND_ECR_REPO }} --image-ids "$IMAGE_IDS" || true
+            if [ "${IMAGE_IDS}" != "[]" ]; then
+              aws ecr batch-delete-image --repository-name ${{ env.FRONTEND_ECR_REPO }} --image-ids "${IMAGE_IDS}" || true
             fi
-            
-            # Delete repository
             echo "Deleting frontend repository..."
             aws ecr delete-repository --repository-name ${{ env.FRONTEND_ECR_REPO }} --force || true
           fi
-          echo "✅ ECR cleanup complete"
+          echo "ECR cleanup complete"
       
-      # Clean up remaining VPC and networking resources with proper dependency management
       - name: Clean up VPC and networking resources
+        env:
+          VPC_ID_OVERRIDE: ${{ secrets.VPC_ID_DEV }}
         run: |
-          echo "🧹 Cleaning up VPC and networking resources..."
-          
-          # Check if VPC exists
-          VPC_ID=$(aws ec2 describe-vpcs --filters "Name=tag:Name,Values=transinia-dev-vpc" --query "Vpcs[0].VpcId" --output text 2>/dev/null || echo "NOT_FOUND")
-          
-          if [ "$VPC_ID" != "NOT_FOUND" ]; then
-            echo "Found VPC: $VPC_ID"
-            
-            # Step 1: Find all network interfaces (ENIs) in the VPC first and delete them
-            echo "Finding and deleting network interfaces in VPC..."
-            ENI_IDS=$(aws ec2 describe-network-interfaces --filters "Name=vpc-id,Values=$VPC_ID" --query "NetworkInterfaces[*].NetworkInterfaceId" --output text)
-            
-            if [ -n "$ENI_IDS" ]; then
-              for ENI_ID in $ENI_IDS; do
-                # Check if the ENI has attachments and detach if needed
-                ATTACHMENT=$(aws ec2 describe-network-interfaces --network-interface-ids $ENI_ID --query "NetworkInterfaces[0].Attachment.AttachmentId" --output text 2>/dev/null || echo "")
-                if [ -n "$ATTACHMENT" ] && [ "$ATTACHMENT" != "None" ] && [ "$ATTACHMENT" != "" ]; then
-                  echo "Detaching network interface: $ENI_ID (attachment: $ATTACHMENT)"
-                  aws ec2 detach-network-interface --attachment-id $ATTACHMENT --force || true
-                  # Wait for detachment to complete
-                  sleep 10
-                fi
-                
-                # Delete the ENI
-                echo "Deleting network interface: $ENI_ID"
-                aws ec2 delete-network-interface --network-interface-id $ENI_ID || true
-                sleep 5
-              done
+          set -Eeuo pipefail
+          echo "Cleaning up VPC and networking resources..."
+
+          is_valid_vpc_id() {
+            [[ "${1:-}" =~ ^vpc-([0-9a-f]{8}|[0-9a-f]{17})$ ]]
+          }
+
+          VPC_ID="${VPC_ID_OVERRIDE:-}"
+
+          if [ -z "${VPC_ID}" ]; then
+            RAW_VPC_ID=$(aws ec2 describe-vpcs \
+              --filters "Name=tag:Name,Values=transinia-dev-vpc" \
+              --query "Vpcs[0].VpcId" --output text 2>/dev/null || true)
+            if [ "${RAW_VPC_ID}" = "None" ] || [ -z "${RAW_VPC_ID}" ]; then
+              VPC_ID=""
+            else
+              VPC_ID="${RAW_VPC_ID}"
             fi
-            
-            # Step 2: Check for and delete NAT Gateways
-            echo "Finding and deleting NAT Gateways..."
-            NAT_IDS=$(aws ec2 describe-nat-gateways --filter "Name=vpc-id,Values=$VPC_ID" --query "NatGateways[*].NatGatewayId" --output text)
-            
-            if [ -n "$NAT_IDS" ]; then
-              for NAT_ID in $NAT_IDS; do
-                echo "Deleting NAT Gateway: $NAT_ID"
-                aws ec2 delete-nat-gateway --nat-gateway-id $NAT_ID || true
-              done
-              # NAT Gateway deletion takes time, wait before proceeding
-              echo "Waiting for NAT Gateways to delete (this may take a few minutes)..."
-              sleep 30
-            fi
-            
-            # Step 3: Check for and release any Elastic IPs
-            echo "Finding and releasing Elastic IPs..."
-            ALLOC_IDS=$(aws ec2 describe-addresses --filters "Name=domain,Values=vpc" --query "Addresses[*].AllocationId" --output text)
-            
-            if [ -n "$ALLOC_IDS" ]; then
-              for ALLOC_ID in $ALLOC_IDS; do
-                echo "Releasing Elastic IP: $ALLOC_ID"
-                aws ec2 release-address --allocation-id $ALLOC_ID || true
-              done
-            fi
-            
-            # Step 4: Find and delete any load balancers (additional check to the one already done)
-            echo "Double-checking for load balancers..."
-            LB_ARNS=$(aws elbv2 describe-load-balancers --query "LoadBalancers[?VpcId=='$VPC_ID'].LoadBalancerArn" --output text)
-            
-            if [ -n "$LB_ARNS" ]; then
-              for LB_ARN in $LB_ARNS; do
-                echo "Deleting load balancer: $LB_ARN"
-                aws elbv2 delete-load-balancer --load-balancer-arn $LB_ARN || true
-              done
-              echo "Waiting for load balancers to be deleted..."
-              sleep 30
-            fi
-            
-            # Step 5: Delete security groups (except default)
-            echo "Finding and deleting security groups..."
-            SG_IDS=$(aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$VPC_ID" --query "SecurityGroups[?GroupName!=\`default\`].GroupId" --output text)
-            
-            if [ -n "$SG_IDS" ]; then
-              for SG_ID in $SG_IDS; do
-                echo "Deleting security group: $SG_ID"
-                # First, try to remove all ingress rules
-                aws ec2 revoke-security-group-ingress --group-id $SG_ID --ip-permissions "$(aws ec2 describe-security-groups --group-ids $SG_ID --query 'SecurityGroups[0].IpPermissions' --output json)" 2>/dev/null || true
-                # Then, try to remove all egress rules
-                aws ec2 revoke-security-group-egress --group-id $SG_ID --ip-permissions "$(aws ec2 describe-security-groups --group-ids $SG_ID --query 'SecurityGroups[0].IpPermissionsEgress' --output json)" 2>/dev/null || true
-                # Now try to delete the security group
-                aws ec2 delete-security-group --group-id $SG_ID || true
-                sleep 2
-              done
-            fi
-            
-            # Step 6: Find and detach/delete internet gateways
-            echo "Finding and deleting internet gateways..."
-            IGW_ID=$(aws ec2 describe-internet-gateways --filters "Name=attachment.vpc-id,Values=$VPC_ID" --query "InternetGateways[0].InternetGatewayId" --output text)
-            
-            if [ -n "$IGW_ID" ] && [ "$IGW_ID" != "None" ]; then
-              echo "Detaching internet gateway: $IGW_ID from VPC: $VPC_ID"
-              aws ec2 detach-internet-gateway --internet-gateway-id $IGW_ID --vpc-id $VPC_ID || true
-              sleep 5
-              
-              echo "Deleting internet gateway: $IGW_ID"
-              aws ec2 delete-internet-gateway --internet-gateway-id $IGW_ID || true
-              sleep 5
-            fi
-            
-            # Step 7: Disassociate and delete route tables (except the main one)
-            echo "Finding and deleting route tables..."
-            # First, get all route table associations
-            RT_ASSOC_IDS=$(aws ec2 describe-route-tables --filters "Name=vpc-id,Values=$VPC_ID" --query "RouteTables[*].Associations[?!Main].RouteTableAssociationId" --output text)
-            
-            if [ -n "$RT_ASSOC_IDS" ]; then
-              for RT_ASSOC_ID in $RT_ASSOC_IDS; do
-                echo "Disassociating route table association: $RT_ASSOC_ID"
-                aws ec2 disassociate-route-table --association-id $RT_ASSOC_ID || true
-                sleep 2
-              done
-            fi
-            
-            # Now delete non-main route tables
-            RT_IDS=$(aws ec2 describe-route-tables --filters "Name=vpc-id,Values=$VPC_ID" --query "RouteTables[?Associations[0].Main!=\`true\`].RouteTableId" --output text)
-            
-            if [ -n "$RT_IDS" ]; then
-              for RT_ID in $RT_IDS; do
-                echo "Deleting route table: $RT_ID"
-                aws ec2 delete-route-table --route-table-id $RT_ID || true
-                sleep 2
-              done
-            fi
-            
-            # Step 8: Delete subnets
-            echo "Finding and deleting subnets..."
-            SUBNET_IDS=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" --query "Subnets[*].SubnetId" --output text)
-            
-            if [ -n "$SUBNET_IDS" ]; then
-              for SUBNET_ID in $SUBNET_IDS; do
-                echo "Deleting subnet: $SUBNET_ID"
-                aws ec2 delete-subnet --subnet-id $SUBNET_ID || true
-                sleep 2
-              done
-            fi
-            
-            # Step 9: Finally delete the VPC
-            echo "Deleting VPC: $VPC_ID"
-            aws ec2 delete-vpc --vpc-id $VPC_ID || true
-          else
-            echo "VPC not found."
           fi
-          echo "✅ VPC and networking cleanup complete"
+
+          if [ -z "${VPC_ID}" ] || ! is_valid_vpc_id "${VPC_ID}"; then
+            echo "VPC not found or invalid ID resolved. Skipping VPC/network cleanup."
+            echo "Resolved VPC_ID='${VPC_ID:-<empty>}'"
+            exit 0
+          fi
+
+          if ! aws ec2 describe-vpcs --vpc-ids "${VPC_ID}" >/dev/null 2>&1; then
+            echo "VPC '${VPC_ID}' does not exist in region '${{ env.AWS_REGION }}'. Skipping."
+            exit 0
+          fi
+
+          echo "Found VPC: ${VPC_ID}"
+
+          echo "Finding and deleting network interfaces in VPC..."
+          ENI_IDS=$(aws ec2 describe-network-interfaces \
+            --filters "Name=vpc-id,Values=${VPC_ID}" \
+            --query "NetworkInterfaces[*].NetworkInterfaceId" --output text)
+          if [ -n "${ENI_IDS}" ]; then
+            for ENI_ID in ${ENI_IDS}; do
+              ATTACHMENT=$(aws ec2 describe-network-interfaces --network-interface-ids "${ENI_ID}" \
+                --query "NetworkInterfaces[0].Attachment.AttachmentId" --output text 2>/dev/null || echo "")
+              if [ -n "${ATTACHMENT}" ] && [ "${ATTACHMENT}" != "None" ]; then
+                echo "Detaching ENI ${ENI_ID} (attachment ${ATTACHMENT})"
+                aws ec2 detach-network-interface --attachment-id "${ATTACHMENT}" --force || true
+                sleep 10
+              fi
+              echo "Deleting ENI ${ENI_ID}"
+              aws ec2 delete-network-interface --network-interface-id "${ENI_ID}" || true
+              sleep 5
+            done
+          fi
+
+          echo "Finding and deleting NAT Gateways..."
+          NAT_IDS=$(aws ec2 describe-nat-gateways \
+            --filter "Name=vpc-id,Values=${VPC_ID}" \
+            --query "NatGateways[*].NatGatewayId" --output text)
+          if [ -n "${NAT_IDS}" ]; then
+            for NAT_ID in ${NAT_IDS}; do
+              echo "Deleting NAT Gateway: ${NAT_ID}"
+              aws ec2 delete-nat-gateway --nat-gateway-id "${NAT_ID}" || true
+            done
+            echo "Waiting for NAT Gateways to delete..."
+            sleep 60
+          fi
+
+          echo "Finding and releasing Elastic IPs (associated in VPC)..."
+          VPC_ENI_ALLOCS=$(aws ec2 describe-addresses \
+            --query "Addresses[?AssociationId!=null && NetworkInterfaceId!=null].{Alloc:AllocationId,Eni:NetworkInterfaceId}" --output json)
+          if [ "${VPC_ENI_ALLOCS}" != "[]" ]; then
+            for ALLOC in $(echo "${VPC_ENI_ALLOCS}" | jq -r '.[] | "\(.Alloc) \(.Eni)"'); do
+              ALLOC_ID=$(echo "${ALLOC}" | awk '{print $1}')
+              ENI_ID=$(echo "${ALLOC}" | awk '{print $2}')
+              ENI_VPC=$(aws ec2 describe-network-interfaces --network-interface-ids "${ENI_ID}" \
+                --query "NetworkInterfaces[0].VpcId" --output text 2>/dev/null || echo "")
+              if [ "${ENI_VPC}" = "${VPC_ID}" ]; then
+                echo "Releasing EIP allocation ${ALLOC_ID} attached via ENI ${ENI_ID}"
+                aws ec2 release-address --allocation-id "${ALLOC_ID}" || true
+              fi
+            done
+          fi
+
+          echo "Double-checking for load balancers..."
+          LB_ARNS=$(aws elbv2 describe-load-balancers \
+            --query "LoadBalancers[?VpcId=='${VPC_ID}'].LoadBalancerArn" --output text || true)
+          if [ -n "${LB_ARNS}" ]; then
+            for LB_ARN in ${LB_ARNS}; do
+              echo "Deleting load balancer: ${LB_ARN}"
+              aws elbv2 delete-load-balancer --load-balancer-arn "${LB_ARN}" || true
+            done
+            echo "Waiting for load balancers to delete..."
+            sleep 60
+          fi
+
+          echo "Finding and deleting security groups..."
+          SG_IDS=$(aws ec2 describe-security-groups \
+            --filters "Name=vpc-id,Values=${VPC_ID}" \
+            --query "SecurityGroups[?GroupName!=\`default\`].GroupId" --output text)
+          if [ -n "${SG_IDS}" ]; then
+            for SG_ID in ${SG_IDS}; do
+              echo "Cleaning and deleting security group: ${SG_ID}"
+              aws ec2 revoke-security-group-ingress --group-id "${SG_ID}" \
+                --ip-permissions "$(aws ec2 describe-security-groups --group-ids "${SG_ID}" \
+                --query 'SecurityGroups[0].IpPermissions' --output json)" 2>/dev/null || true
+              aws ec2 revoke-security-group-egress --group-id "${SG_ID}" \
+                --ip-permissions "$(aws ec2 describe-security-groups --group-ids "${SG_ID}" \
+                --query 'SecurityGroups[0].IpPermissionsEgress' --output json)" 2>/dev/null || true
+              aws ec2 delete-security-group --group-id "${SG_ID}" || true
+              sleep 2
+            done
+          fi
+
+          echo "Finding and deleting internet gateways..."
+          IGW_IDS=$(aws ec2 describe-internet-gateways \
+            --filters "Name=attachment.vpc-id,Values=${VPC_ID}" \
+            --query "InternetGateways[*].InternetGatewayId" --output text)
+          if [ -n "${IGW_IDS}" ]; then
+            for IGW_ID in ${IGW_IDS}; do
+              echo "Detaching and deleting IGW: ${IGW_ID}"
+              aws ec2 detach-internet-gateway --internet-gateway-id "${IGW_ID}" --vpc-id "${VPC_ID}" || true
+              sleep 5
+              aws ec2 delete-internet-gateway --internet-gateway-id "${IGW_ID}" || true
+              sleep 5
+            done
+          fi
+
+          echo "Finding and deleting route tables..."
+          RT_ASSOC_IDS=$(aws ec2 describe-route-tables \
+            --filters "Name=vpc-id,Values=${VPC_ID}" \
+            --query "RouteTables[*].Associations[?!Main].RouteTableAssociationId" --output text)
+          if [ -n "${RT_ASSOC_IDS}" ]; then
+            for RT_ASSOC_ID in ${RT_ASSOC_IDS}; do
+              echo "Disassociating route table association: ${RT_ASSOC_ID}"
+              aws ec2 disassociate-route-table --association-id "${RT_ASSOC_ID}" || true
+              sleep 2
+            done
+          fi
+          RT_IDS=$(aws ec2 describe-route-tables \
+            --filters "Name=vpc-id,Values=${VPC_ID}" \
+            --query "RouteTables[?Associations[0].Main!=\`true\`].RouteTableId" --output text)
+          if [ -n "${RT_IDS}" ]; then
+            for RT_ID in ${RT_IDS}; do
+              echo "Deleting route table: ${RT_ID}"
+              aws ec2 delete-route-table --route-table-id "${RT_ID}" || true
+              sleep 2
+            done
+          fi
+
+          echo "Finding and deleting subnets..."
+          SUBNET_IDS=$(aws ec2 describe-subnets \
+            --filters "Name=vpc-id,Values=${VPC_ID}" \
+            --query "Subnets[*].SubnetId" --output text)
+          if [ -n "${SUBNET_IDS}" ]; then
+            for SUBNET_ID in ${SUBNET_IDS}; do
+              echo "Deleting subnet: ${SUBNET_ID}"
+              aws ec2 delete-subnet --subnet-id "${SUBNET_ID}" || true
+              sleep 2
+            done
+          fi
+
+          echo "Deleting VPC: ${VPC_ID}"
+          aws ec2 delete-vpc --vpc-id "${VPC_ID}" || true
+
+          echo "VPC and networking cleanup complete"
       
-      # Clean up IAM roles with thorough dependency management
       - name: Clean up IAM roles
         run: |
-          echo "🧹 Cleaning up IAM roles..."
+          set -Eeuo pipefail
+          echo "Cleaning up IAM roles..."
           
-          # Check and delete ECS task role
           TASK_ROLE_EXISTS=$(aws iam get-role --role-name "transinia-dev-ecsTaskRole" --query "Role.RoleName" --output text 2>/dev/null || echo "NOT_FOUND")
-          if [ "$TASK_ROLE_EXISTS" != "NOT_FOUND" ]; then
+          if [ "${TASK_ROLE_EXISTS}" != "NOT_FOUND" ]; then
             echo "Found task role. Cleaning up dependencies..."
             
-            # Step 1: Check for and remove any instance profiles using the role
             INSTANCE_PROFILES=$(aws iam list-instance-profiles-for-role --role-name "transinia-dev-ecsTaskRole" --query "InstanceProfiles[*].InstanceProfileName" --output text)
-            if [ -n "$INSTANCE_PROFILES" ]; then
-              for PROFILE in $INSTANCE_PROFILES; do
-                echo "Removing role from instance profile: $PROFILE"
-                aws iam remove-role-from-instance-profile --instance-profile-name $PROFILE --role-name "transinia-dev-ecsTaskRole" || true
+            if [ -n "${INSTANCE_PROFILES}" ]; then
+              for PROFILE in ${INSTANCE_PROFILES}; do
+                echo "Removing role from instance profile: ${PROFILE}"
+                aws iam remove-role-from-instance-profile --instance-profile-name "${PROFILE}" --role-name "transinia-dev-ecsTaskRole" || true
                 sleep 2
               done
             fi
             
-            # Step 2: List and detach managed policies with better error handling
             echo "Finding and removing attached policies from task role..."
             ATTACHED_POLICIES=$(aws iam list-attached-role-policies --role-name "transinia-dev-ecsTaskRole" --query "AttachedPolicies[*].PolicyArn" --output text 2>/dev/null || echo "")
-            if [ -n "$ATTACHED_POLICIES" ]; then
-              for POLICY in $ATTACHED_POLICIES; do
-                echo "Detaching policy: $POLICY"
-                aws iam detach-role-policy --role-name "transinia-dev-ecsTaskRole" --policy-arn "$POLICY" || true
+            if [ -n "${ATTACHED_POLICIES}" ]; then
+              for POLICY in ${ATTACHED_POLICIES}; do
+                echo "Detaching policy: ${POLICY}"
+                aws iam detach-role-policy --role-name "transinia-dev-ecsTaskRole" --policy-arn "${POLICY}" || true
                 sleep 2
               done
             else
               echo "No attached policies found on task role"
             fi
             
-            # Step 3: List and delete inline policies with better error handling
             echo "Finding and removing inline policies..."
             INLINE_POLICIES=$(aws iam list-role-policies --role-name "transinia-dev-ecsTaskRole" --query "PolicyNames" --output text 2>/dev/null || echo "")
-            if [ -n "$INLINE_POLICIES" ]; then
-              for POLICY in $INLINE_POLICIES; do
-                echo "Deleting inline policy: $POLICY"
-                aws iam delete-role-policy --role-name "transinia-dev-ecsTaskRole" --policy-name "$POLICY" || true
+            if [ -n "${INLINE_POLICIES}" ]; then
+              for POLICY in ${INLINE_POLICIES}; do
+                echo "Deleting inline policy: ${POLICY}"
+                aws iam delete-role-policy --role-name "transinia-dev-ecsTaskRole" --policy-name "${POLICY}" || true
                 sleep 2
               done
             else
               echo "No inline policies found"
             fi
             
-            # Step 4: Delete the role with improved error handling and multiple retries
             echo "Deleting task role..."
-            
-            # Wait a moment for policy detachments to complete
             sleep 5
-            
             MAX_RETRIES=5
             for ((i=1; i<=MAX_RETRIES; i++)); do
-              # Check if the role still exists
               if aws iam get-role --role-name "transinia-dev-ecsTaskRole" &>/dev/null; then
                 echo "Attempt $i/$MAX_RETRIES: Deleting role 'transinia-dev-ecsTaskRole'..."
                 aws iam delete-role --role-name "transinia-dev-ecsTaskRole" && { echo "Role successfully deleted"; break; } || echo "Delete attempt $i/$MAX_RETRIES failed, retrying in 15 seconds..."
@@ -559,53 +536,44 @@ jobs:
             done
           fi
           
-          # Check and delete ECS execution role with the same thorough process
           EXEC_ROLE_EXISTS=$(aws iam get-role --role-name "transinia-dev-ecsTaskExecutionRole" --query "Role.RoleName" --output text 2>/dev/null || echo "NOT_FOUND")
-          if [ "$EXEC_ROLE_EXISTS" != "NOT_FOUND" ]; then
+          if [ "${EXEC_ROLE_EXISTS}" != "NOT_FOUND" ]; then
             echo "Found execution role. Cleaning up dependencies..."
             
-            # Step 1: Check for and remove any instance profiles
             INSTANCE_PROFILES=$(aws iam list-instance-profiles-for-role --role-name "transinia-dev-ecsTaskExecutionRole" --query "InstanceProfiles[*].InstanceProfileName" --output text)
-            if [ -n "$INSTANCE_PROFILES" ]; then
-              for PROFILE in $INSTANCE_PROFILES; do
-                echo "Removing role from instance profile: $PROFILE"
-                aws iam remove-role-from-instance-profile --instance-profile-name $PROFILE --role-name "transinia-dev-ecsTaskExecutionRole" || true
+            if [ -n "${INSTANCE_PROFILES}" ]; then
+              for PROFILE in ${INSTANCE_PROFILES}; do
+                echo "Removing role from instance profile: ${PROFILE}"
+                aws iam remove-role-from-instance-profile --instance-profile-name "${PROFILE}" --role-name "transinia-dev-ecsTaskExecutionRole" || true
                 sleep 2
               done
             fi
             
-            # Step 2: List and detach managed policies
             ATTACHED_POLICIES=$(aws iam list-attached-role-policies --role-name "transinia-dev-ecsTaskExecutionRole" --query "AttachedPolicies[*].PolicyArn" --output text)
-            if [ -n "$ATTACHED_POLICIES" ]; then
-              for POLICY in $ATTACHED_POLICIES; do
-                echo "Detaching policy: $POLICY"
-                aws iam detach-role-policy --role-name "transinia-dev-ecsTaskExecutionRole" --policy-arn $POLICY || true
+            if [ -n "${ATTACHED_POLICIES}" ]; then
+              for POLICY in ${ATTACHED_POLICIES}; do
+                echo "Detaching policy: ${POLICY}"
+                aws iam detach-role-policy --role-name "transinia-dev-ecsTaskExecutionRole" --policy-arn "${POLICY}" || true
                 sleep 1
               done
             fi
             
-            # Step 3: List and delete inline policies with better error handling
             echo "Finding and removing inline policies..."
             INLINE_POLICIES=$(aws iam list-role-policies --role-name "transinia-dev-ecsTaskExecutionRole" --query "PolicyNames" --output text 2>/dev/null || echo "")
-            if [ -n "$INLINE_POLICIES" ]; then
-              for POLICY in $INLINE_POLICIES; do
-                echo "Deleting inline policy: $POLICY"
-                aws iam delete-role-policy --role-name "transinia-dev-ecsTaskExecutionRole" --policy-name "$POLICY" || true
+            if [ -n "${INLINE_POLICIES}" ]; then
+              for POLICY in ${INLINE_POLICIES}; do
+                echo "Deleting inline policy: ${POLICY}"
+                aws iam delete-role-policy --role-name "transinia-dev-ecsTaskExecutionRole" --policy-name "${POLICY}" || true
                 sleep 2
               done
             else
               echo "No inline policies found"
             fi
             
-            # Step 4: Delete the role with improved error handling and multiple retries
             echo "Deleting execution role..."
-            
-            # Wait a moment for policy detachments to complete
             sleep 5
-            
             MAX_RETRIES=5
             for ((i=1; i<=MAX_RETRIES; i++)); do
-              # Check if the role still exists
               if aws iam get-role --role-name "transinia-dev-ecsTaskExecutionRole" &>/dev/null; then
                 echo "Attempt $i/$MAX_RETRIES: Deleting role 'transinia-dev-ecsTaskExecutionRole'..."
                 aws iam delete-role --role-name "transinia-dev-ecsTaskExecutionRole" && { echo "Role successfully deleted"; break; } || echo "Delete attempt $i/$MAX_RETRIES failed, retrying in 15 seconds..."
@@ -616,25 +584,24 @@ jobs:
               fi
             done
           fi
-          echo "✅ IAM roles cleanup complete"
+          echo "IAM roles cleanup complete"
 
-      # Final cleanup summary
       - name: Destruction Summary
         if: always()
         run: |
-          echo "🧹 Infrastructure destruction summary 🧹"
+          echo "Infrastructure destruction summary"
           echo "=================================================="
           echo "The following resources have been targeted for cleanup:"
           echo ""
-          echo "✅ ECS Cluster: transinia-dev-cluster"
-          echo "✅ ECS Services and Tasks"
-          echo "✅ ECR Repositories: ${{ env.BACKEND_ECR_REPO }}, ${{ env.FRONTEND_ECR_REPO }}"
-          echo "✅ DynamoDB Tables: transinia-dev-${{ secrets.DEV_DYNAMODB_TABLE_MEETINGS_BASE }}, transinia-dev-${{ secrets.DEV_DYNAMODB_TABLE_ACTIONS_BASE }}"
-          echo "✅ S3 Buckets: transinia-dev-${{ secrets.DEV_S3_BUCKET_RAW_BASE }}, transinia-dev-${{ secrets.DEV_S3_BUCKET_PROCESSED_BASE }}"
-          echo "✅ Load Balancer: transinia-dev-alb"
-          echo "✅ CloudWatch Log Groups: /ecs/transinia-dev-backend, /ecs/transinia-dev-frontend"
-          echo "✅ VPC and Networking Components"
-          echo "✅ IAM Roles: transinia-dev-ecsTaskRole, transinia-dev-ecsTaskExecutionRole"
+          echo "ECS Cluster: transinia-dev-cluster"
+          echo "ECS Services and Tasks"
+          echo "ECR Repositories: ${{ env.BACKEND_ECR_REPO }}, ${{ env.FRONTEND_ECR_REPO }}"
+          echo "DynamoDB Tables: transinia-dev-${{ secrets.DEV_DYNAMODB_TABLE_MEETINGS_BASE }}, transinia-dev-${{ secrets.DEV_DYNAMODB_TABLE_ACTIONS_BASE }}"
+          echo "S3 Buckets: transinia-dev-${{ secrets.DEV_S3_BUCKET_RAW_BASE }}, transinia-dev-${{ secrets.DEV_S3_BUCKET_PROCESSED_BASE }}"
+          echo "Load Balancer: transinia-dev-alb"
+          echo "CloudWatch Log Groups: /ecs/transinia-dev-backend, /ecs/transinia-dev-frontend"
+          echo "VPC and Networking Components"
+          echo "IAM Roles: transinia-dev-ecsTaskRole, transinia-dev-ecsTaskExecutionRole"
           echo ""
-          echo "🚀 Infrastructure destruction completed!"
+          echo "Infrastructure destruction completed"
           echo "=================================================="
