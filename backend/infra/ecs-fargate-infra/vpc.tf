@@ -86,21 +86,31 @@ variable "use_existing_vpc_resources" {
 
 # Data sources to fetch existing subnets if not creating them
 data "aws_subnet" "public_a" {
-  count = (!var.create_vpc_resources && var.use_existing_vpc_resources) ? 1 : 0
+  count = var.use_existing_vpc_resources ? 1 : 0
   
   filter {
     name   = "tag:Name"
     values = ["${local.app}-${local.env}-subnet-public-a"]
   }
+  
+  # Add depends_on to make this more stable and avoid failures during first apply
+  depends_on = [
+    data.aws_vpc.existing
+  ]
 }
 
 data "aws_subnet" "public_b" {
-  count = (!var.create_vpc_resources && var.use_existing_vpc_resources) ? 1 : 0
+  count = var.use_existing_vpc_resources ? 1 : 0
   
   filter {
     name   = "tag:Name"
     values = ["${local.app}-${local.env}-subnet-public-b"]
   }
+  
+  # Add depends_on to make this more stable and avoid failures during first apply
+  depends_on = [
+    data.aws_vpc.existing
+  ]
 }
 
 # Local values for subnet IDs
