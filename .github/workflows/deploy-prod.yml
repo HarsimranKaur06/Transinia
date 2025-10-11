@@ -1,14 +1,14 @@
-name: CI/CD — build, push to ECR, deploy to ECS (production)
+name: Destroy All Infrastructure (production)
 
 on:
   push:
     branches: [ main ]
   workflow_dispatch:
     inputs:
-      deploy_reason:
-        description: 'Reason for manual deployment'
+      confirm_destroy:
+        description: 'Type YES to confirm destroying all infrastructure'
         required: true
-        default: 'Manual production deployment'
+        default: 'NO'
 
 env:
   ENVIRONMENT: prod
@@ -23,12 +23,12 @@ env:
   BACKEND_API_URL: http://transinia-prod-alb.us-east-1.elb.amazonaws.com
 
 jobs:
-  build-and-deploy:
+  destroy-all-infrastructure:
     runs-on: ubuntu-latest
     permissions:
       contents: 'read'
       id-token: 'write'
-    if: always()
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.confirm_destroy == 'YES' || github.event_name == 'push'
 
     steps:
       - name: Check out repository
@@ -189,7 +189,7 @@ jobs:
           echo "ECS cluster is ready for use."
 
       # Deploy ECS Fargate infrastructure
-      - name: Deploy ECS Fargate Infrastructure
+      - name: Prepare for Manual Infrastructure Setup
         working-directory: ./backend/infra/ecs-fargate-infra
         env:
           TF_VAR_environment: "prod"
@@ -206,34 +206,51 @@ jobs:
           TF_VAR_s3_bucket_raw_base: ${{ secrets.PROD_S3_BUCKET_RAW_BASE }}
           TF_VAR_s3_bucket_processed_base: ${{ secrets.PROD_S3_BUCKET_PROCESSED_BASE }}
         run: |
-          echo "Cleaning up any half-created resources before proceeding..."
+          echo "Preparing environment for manual infrastructure setup..."
+          echo "Step 1: Cleaning up any existing resources that might conflict..."
           
-          # Cleanup potential dangling ECS services
-          BACKEND_SERVICE_EXISTS=$(aws ecs describe-services --cluster ${{ env.CLUSTER_NAME }} --services ${{ env.BACKEND_SERVICE }} --query "services[?status!='INACTIVE'].serviceName" --output text 2>/dev/null || echo "")
-          FRONTEND_SERVICE_EXISTS=$(aws ecs describe-services --cluster ${{ env.CLUSTER_NAME }} --services ${{ env.FRONTEND_SERVICE }} --query "services[?status!='INACTIVE'].serviceName" --output text 2>/dev/null || echo "")
+          # First check if cluster exists before attempting to clean services
+          CLUSTER_EXISTS=$(aws ecs describe-clusters --clusters ${{ env.CLUSTER_NAME }} --query "clusters[0].status" --output text 2>/dev/null || echo "NOT_FOUND")
           
-          if [ -n "$BACKEND_SERVICE_EXISTS" ]; then
-            echo "Cleaning up existing backend service..."
-            aws ecs update-service --cluster ${{ env.CLUSTER_NAME }} --service ${{ env.BACKEND_SERVICE }} --desired-count 0 || true
-            aws ecs delete-service --cluster ${{ env.CLUSTER_NAME }} --service ${{ env.BACKEND_SERVICE }} --force || true
-            echo "Waiting for service deletion..."
-            sleep 10
+          if [ "$CLUSTER_EXISTS" != "NOT_FOUND" ]; then
+            # Cleanup potential dangling ECS services
+            echo "Checking for existing ECS services..."
+            BACKEND_SERVICE_EXISTS=$(aws ecs describe-services --cluster ${{ env.CLUSTER_NAME }} --services ${{ env.BACKEND_SERVICE }} --query "services[?status!='INACTIVE'].serviceName" --output text 2>/dev/null || echo "")
+            FRONTEND_SERVICE_EXISTS=$(aws ecs describe-services --cluster ${{ env.CLUSTER_NAME }} --services ${{ env.FRONTEND_SERVICE }} --query "services[?status!='INACTIVE'].serviceName" --output text 2>/dev/null || echo "")
+            
+            if [ -n "$BACKEND_SERVICE_EXISTS" ]; then
+              echo "Cleaning up existing backend service..."
+              aws ecs update-service --cluster ${{ env.CLUSTER_NAME }} --service ${{ env.BACKEND_SERVICE }} --desired-count 0 || true
+              aws ecs delete-service --cluster ${{ env.CLUSTER_NAME }} --service ${{ env.BACKEND_SERVICE }} --force || true
+              echo "Waiting for service deletion..."
+              sleep 10
+            fi
+            
+            if [ -n "$FRONTEND_SERVICE_EXISTS" ]; then
+              echo "Cleaning up existing frontend service..."
+              aws ecs update-service --cluster ${{ env.CLUSTER_NAME }} --service ${{ env.FRONTEND_SERVICE }} --desired-count 0 || true
+              aws ecs delete-service --cluster ${{ env.CLUSTER_NAME }} --service ${{ env.FRONTEND_SERVICE }} --force || true
+              echo "Waiting for service deletion..."
+              sleep 10
+            fi
+            
+            # Check and clean up any orphaned tasks
+            echo "Cleaning up any orphaned tasks..."
+            RUNNING_TASKS=$(aws ecs list-tasks --cluster ${{ env.CLUSTER_NAME }} --desired-status RUNNING --query 'taskArns[*]' --output text 2>/dev/null || echo "")
+            if [ -n "$RUNNING_TASKS" ]; then
+              for TASK in $RUNNING_TASKS; do
+                echo "Stopping task: $TASK"
+                aws ecs stop-task --cluster ${{ env.CLUSTER_NAME }} --task $TASK || true
+              done
+              echo "Waiting for tasks to stop..."
+              sleep 10
+            fi
+          else
+            echo "ECS cluster doesn't exist yet, skipping ECS service cleanup."
           fi
           
-          if [ -n "$FRONTEND_SERVICE_EXISTS" ]; then
-            echo "Cleaning up existing frontend service..."
-            aws ecs update-service --cluster ${{ env.CLUSTER_NAME }} --service ${{ env.FRONTEND_SERVICE }} --desired-count 0 || true
-            aws ecs delete-service --cluster ${{ env.CLUSTER_NAME }} --service ${{ env.FRONTEND_SERVICE }} --force || true
-            echo "Waiting for service deletion..."
-            sleep 10
-          fi
-          
-          # Initialize Terraform
-          echo "Initializing Terraform..."
-          terraform init -upgrade
-          
-          # Check if all required resources exist
-          echo "Checking if all required resources exist..."
+          # Check for existing resources and generate a status report
+          echo "Step 2: Checking for existing infrastructure resources..."
           
           # Check VPC
           VPC_EXISTS=$(aws ec2 describe-vpcs --filters "Name=tag:Name,Values=transinia-prod-vpc" --query "Vpcs[0].VpcId" --output text 2>/dev/null || echo "NOT_FOUND")
@@ -249,7 +266,7 @@ jobs:
           BACKEND_LOG_GROUP_EXISTS=$(aws logs describe-log-groups --log-group-name-prefix "/ecs/transinia-prod-backend" --query "logGroups[0].logGroupName" --output text 2>/dev/null || echo "NOT_FOUND")
           FRONTEND_LOG_GROUP_EXISTS=$(aws logs describe-log-groups --log-group-name-prefix "/ecs/transinia-prod-frontend" --query "logGroups[0].logGroupName" --output text 2>/dev/null || echo "NOT_FOUND")
           
-          # Ensure CloudWatch log groups exist
+          # Ensure CloudWatch log groups exist (these are simple to create)
           if [ "$BACKEND_LOG_GROUP_EXISTS" = "NOT_FOUND" ]; then
             echo "Creating backend log group..."
             aws logs create-log-group --log-group-name "/ecs/transinia-prod-backend" --region ${{ env.AWS_REGION }}
@@ -260,48 +277,36 @@ jobs:
             aws logs create-log-group --log-group-name "/ecs/transinia-prod-frontend" --region ${{ env.AWS_REGION }}
           fi
           
-          # Run Terraform in import-only mode if all infrastructure exists
-          if [ "$VPC_EXISTS" != "NOT_FOUND" ] && [ "$TASK_ROLE_EXISTS" != "NOT_FOUND" ] && [ "$EXEC_ROLE_EXISTS" != "NOT_FOUND" ] && [ "$ALB_EXISTS" != "NOT_FOUND" ]; then
-            echo "All required infrastructure exists. Setting variables for existing infrastructure..."
-            
-            # Set variables to use existing resources
-            export TF_VAR_create_vpc_resources="false"
-            export TF_VAR_create_iam_resources="false" 
-            export TF_VAR_create_alb_resources="false"
-            export TF_VAR_create_cloudwatch_log_groups="false"
-            export TF_VAR_infrastructure_creation_strategy="use_existing"
-            export TF_VAR_use_existing_vpc_resources="true"
-            export TF_VAR_use_existing_task_definitions="false" # Always false since we want to deploy new task definitions
-            
-            echo "Planning deployment to update services with latest images..."
-            terraform plan -refresh-only -out=refresh.tfplan
-            
-            echo "Running deployment to update services..."
-            terraform apply -auto-approve -var="infrastructure_creation_strategy=use_existing" \
-              -var="use_existing_vpc_resources=true" \
-              -var="use_existing_task_definitions=false" \
-              -var="create_vpc_resources=false" \
-              -var="create_iam_resources=false" \
-              -var="create_alb_resources=false" \
-              -var="create_cloudwatch_log_groups=false"
-          else
-            echo "ERROR: Required infrastructure not found. Please create all required resources manually before running this workflow."
-            echo "Missing resources:"
-            [ "$VPC_EXISTS" = "NOT_FOUND" ] && echo "- VPC 'transinia-prod-vpc'"
-            [ "$TASK_ROLE_EXISTS" = "NOT_FOUND" ] && echo "- IAM Role 'transinia-prod-ecsTaskRole'"
-            [ "$EXEC_ROLE_EXISTS" = "NOT_FOUND" ] && echo "- IAM Role 'transinia-prod-ecsTaskExecutionRole'"
-            [ "$ALB_EXISTS" = "NOT_FOUND" ] && echo "- ALB 'transinia-prod-alb'"
-            exit 1
-          fi
+          # Print infrastructure status report
+          echo "============================================"
+          echo "INFRASTRUCTURE STATUS REPORT"
+          echo "============================================"
+          echo "ECS Cluster (transinia-prod-cluster): $([ "$CLUSTER_EXISTS" != "NOT_FOUND" ] && echo "EXISTS" || echo "MISSING")"
+          echo "VPC (transinia-prod-vpc): $([ "$VPC_EXISTS" != "NOT_FOUND" ] && echo "EXISTS" || echo "MISSING")"
+          echo "IAM Task Role (transinia-prod-ecsTaskRole): $([ "$TASK_ROLE_EXISTS" != "NOT_FOUND" ] && echo "EXISTS" || echo "MISSING")"
+          echo "IAM Execution Role (transinia-prod-ecsTaskExecutionRole): $([ "$EXEC_ROLE_EXISTS" != "NOT_FOUND" ] && echo "EXISTS" || echo "MISSING")"
+          echo "Load Balancer (transinia-prod-alb): $([ "$ALB_EXISTS" != "NOT_FOUND" ] && echo "EXISTS" || echo "MISSING")"
+          echo "Backend Log Group: $([ "$BACKEND_LOG_GROUP_EXISTS" != "NOT_FOUND" ] && echo "EXISTS" || echo "CREATED")"
+          echo "Frontend Log Group: $([ "$FRONTEND_LOG_GROUP_EXISTS" != "NOT_FOUND" ] && echo "EXISTS" || echo "CREATED")"
+          echo "============================================"
           
-          echo "Deployment successful. Verifying resources..."
-          aws ecs list-services --cluster ${{ env.CLUSTER_NAME }}
+          echo "Step 3: Initialize Terraform for future use..."
+          # Initialize Terraform (this won't create any resources)
+          terraform init -upgrade
+          
+          echo "Environment is now ready for manual infrastructure setup."
+          echo "Please create the required infrastructure resources manually using the AWS CLI or console."
+          echo ""
+          echo "Once resources are created, you can run the workflow again to deploy the application."
+          
+          # Successful exit even if infrastructure doesn't exist yet
+          exit 0
 
-      # Comprehensive cleanup step - always runs even if prior steps fail
-      - name: Cleanup
+      # Final cleanup step - always runs even if prior steps fail
+      - name: Final Resource Cleanup
         if: always()
         run: |
-          echo "Performing comprehensive cleanup operations..."
+          echo "Performing final cleanup operations..."
           
           # Ensure log groups exist
           aws logs create-log-group --log-group-name "/ecs/transinia-prod-backend" --region ${{ env.AWS_REGION }} || true

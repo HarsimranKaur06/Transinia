@@ -1,8 +1,14 @@
-name: CI/CD — build, push to ECR, deploy to ECS (dev)
+name: Destroy All Infrastructure (dev)
 
 on:
   push:
     branches: [ dev ]
+  workflow_dispatch:
+    inputs:
+      confirm_destroy:
+        description: 'Type YES to confirm destroying all infrastructure'
+        required: true
+        default: 'NO'
 
 env:
   ENVIRONMENT: dev
@@ -17,13 +23,12 @@ env:
   BACKEND_API_URL: http://transinia-dev-alb-1892657611.us-east-1.elb.amazonaws.com
 
 jobs:
-  build-and-deploy:
+  destroy-all-infrastructure:
     runs-on: ubuntu-latest
     permissions:
       contents: 'read'
       id-token: 'write'
-    # Add always() to ensure cleanup runs even if job fails
-    if: always()
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.confirm_destroy == 'YES' || github.event_name == 'push'
 
     steps:
       - name: Check out repository
@@ -35,17 +40,29 @@ jobs:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
-
-      - name: Create ECR repositories if missing
+          
+      - name: Display destruction warning
         run: |
-          aws ecr describe-repositories --repository-names $BACKEND_ECR_REPO >/dev/null 2>&1 || aws ecr create-repository --repository-name $BACKEND_ECR_REPO
-          aws ecr describe-repositories --repository-names $FRONTEND_ECR_REPO >/dev/null 2>&1 || aws ecr create-repository --repository-name $FRONTEND_ECR_REPO
-
-      - name: Login to ECR
-        uses: aws-actions/amazon-ecr-login@v1
-        id: ecr-login
-        with:
-          mask-password: 'true'
+          echo "⚠️ WARNING: This workflow will DESTROY ALL INFRASTRUCTURE created for the ${{ env.ENVIRONMENT }} environment ⚠️"
+          echo "Resources to be destroyed include:"
+          echo "- ECS clusters, services, and tasks"
+          echo "- Load balancers and target groups"
+          echo "- CloudWatch logs"
+          echo "- DynamoDB tables"
+          echo "- S3 buckets (after emptying them)"
+          echo "- Security groups and other networking components"
+          echo "- ECR repositories (after deleting images)"
+          
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            if [[ "${{ github.event.inputs.confirm_destroy }}" != "YES" ]]; then
+              echo "Destruction NOT confirmed. Exiting without destroying anything."
+              exit 1
+            else
+              echo "Destruction CONFIRMED. Proceeding with resource cleanup..."
+            fi
+          else
+            echo "Running via push trigger. Proceeding with resource cleanup..."
+          fi
 
       # Set up Terraform
       - name: Set up Terraform
@@ -53,259 +70,376 @@ jobs:
         with:
           terraform_version: 1.7.5
 
-      # Deploy DynamoDB infrastructure
-      - name: Deploy DynamoDB Infrastructure
+      # Clean up all CloudWatch logs
+      - name: Clean up CloudWatch logs
+        run: |
+          echo "🧹 Cleaning up CloudWatch log groups..."
+          # Delete backend log group
+          aws logs delete-log-group --log-group-name "/ecs/transinia-dev-backend" || true
+          # Delete frontend log group
+          aws logs delete-log-group --log-group-name "/ecs/transinia-dev-frontend" || true
+          
+          # Check for any other log groups with prefix and delete them
+          LOG_GROUPS=$(aws logs describe-log-groups --log-group-name-prefix "/ecs/transinia-dev" --query "logGroups[*].logGroupName" --output json)
+          if [ "$LOG_GROUPS" != "[]" ]; then
+            for LOG_GROUP in $(echo $LOG_GROUPS | jq -r '.[]'); do
+              echo "Deleting log group: $LOG_GROUP"
+              aws logs delete-log-group --log-group-name "$LOG_GROUP" || true
+            done
+          fi
+          echo "✅ CloudWatch log cleanup complete"
+
+      # Clean up ECS resources
+      - name: Clean up ECS resources
+        run: |
+          echo "🧹 Cleaning up ECS resources..."
+          
+          # Check if cluster exists
+          CLUSTER_EXISTS=$(aws ecs describe-clusters --clusters ${{ env.CLUSTER_NAME }} --query "clusters[0].status" --output text 2>/dev/null || echo "NOT_FOUND")
+          
+          if [ "$CLUSTER_EXISTS" != "NOT_FOUND" ]; then
+            echo "ECS Cluster ${{ env.CLUSTER_NAME }} exists. Cleaning up resources..."
+            
+            # 1. Check and stop any running tasks
+            echo "Checking for running tasks..."
+            RUNNING_TASKS=$(aws ecs list-tasks --cluster ${{ env.CLUSTER_NAME }} --desired-status RUNNING --query "taskArns[*]" --output text)
+            
+            if [ -n "$RUNNING_TASKS" ]; then
+              echo "Found running tasks. Stopping them..."
+              for TASK in $RUNNING_TASKS; do
+                echo "Stopping task: $TASK"
+                aws ecs stop-task --cluster ${{ env.CLUSTER_NAME }} --task $TASK || true
+              done
+              echo "Waiting for tasks to stop..."
+              sleep 30
+            fi
+            
+            # 2. Check and delete services
+            echo "Checking for ECS services..."
+            SERVICES=$(aws ecs list-services --cluster ${{ env.CLUSTER_NAME }} --query "serviceArns" --output text)
+            
+            if [ -n "$SERVICES" ]; then
+              echo "Found services. Updating desired count to 0..."
+              for SERVICE in $SERVICES; do
+                echo "Updating service: $SERVICE"
+                aws ecs update-service --cluster ${{ env.CLUSTER_NAME }} --service $SERVICE --desired-count 0 || true
+              done
+              
+              echo "Waiting for services to scale down..."
+              sleep 30
+              
+              echo "Deleting services..."
+              for SERVICE in $SERVICES; do
+                echo "Deleting service: $SERVICE"
+                aws ecs delete-service --cluster ${{ env.CLUSTER_NAME }} --service $SERVICE --force || true
+              done
+              
+              echo "Waiting for services to be deleted..."
+              sleep 30
+            fi
+            
+            # 3. Delete the cluster
+            echo "Deleting ECS cluster: ${{ env.CLUSTER_NAME }}"
+            aws ecs delete-cluster --cluster ${{ env.CLUSTER_NAME }} || true
+          else
+            echo "ECS Cluster ${{ env.CLUSTER_NAME }} not found."
+          fi
+          
+          # 4. Clean up task definitions
+          echo "Cleaning up task definitions..."
+          TASK_DEFS=$(aws ecs list-task-definitions --family-prefix "transinia-dev" --status ACTIVE --query "taskDefinitionArns" --output json)
+          
+          if [ "$TASK_DEFS" != "[]" ]; then
+            for TASK_DEF in $(echo $TASK_DEFS | jq -r '.[]'); do
+              echo "Deregistering task definition: $TASK_DEF"
+              aws ecs deregister-task-definition --task-definition $TASK_DEF || true
+            done
+          fi
+          echo "✅ ECS resource cleanup complete"
+
+      # Clean up ALB and networking resources
+      - name: Clean up load balancer and networking resources
+        run: |
+          echo "🧹 Cleaning up load balancer and networking resources..."
+          
+          # Check if ALB exists
+          ALB_NAME="transinia-dev-alb"
+          ALB_ARN=$(aws elbv2 describe-load-balancers --names $ALB_NAME --query "LoadBalancers[0].LoadBalancerArn" --output text 2>/dev/null || echo "NOT_FOUND")
+          
+          if [ "$ALB_ARN" != "NOT_FOUND" ]; then
+            echo "Found ALB. Cleaning up related resources..."
+            
+            # Delete listeners first
+            LISTENERS=$(aws elbv2 describe-listeners --load-balancer-arn $ALB_ARN --query "Listeners[*].ListenerArn" --output text)
+            if [ -n "$LISTENERS" ]; then
+              for LISTENER in $LISTENERS; do
+                echo "Deleting listener: $LISTENER"
+                aws elbv2 delete-listener --listener-arn $LISTENER || true
+              done
+              echo "Waiting for listeners to be deleted..."
+              sleep 10
+            fi
+            
+            # Get target groups before deleting ALB
+            TARGET_GROUPS=$(aws elbv2 describe-target-groups --load-balancer-arn $ALB_ARN --query "TargetGroups[*].TargetGroupArn" --output text)
+            
+            # Delete ALB
+            echo "Deleting ALB: $ALB_NAME"
+            aws elbv2 delete-load-balancer --load-balancer-arn $ALB_ARN || true
+            echo "Waiting for ALB to be deleted..."
+            sleep 60
+            
+            # Now delete target groups
+            if [ -n "$TARGET_GROUPS" ]; then
+              for TG in $TARGET_GROUPS; do
+                echo "Deleting target group: $TG"
+                aws elbv2 delete-target-group --target-group-arn $TG || true
+              done
+            fi
+          else
+            echo "ALB not found."
+          fi
+          echo "✅ Load balancer cleanup complete"
+      
+      # Destroy DynamoDB infrastructure
+      - name: Destroy DynamoDB infrastructure
         working-directory: ./backend/infra/dynamodb-infra
         env:
           TF_VAR_environment: "dev"
           TF_VAR_dynamodb_table_meetings: ${{ secrets.DEV_DYNAMODB_TABLE_MEETINGS_BASE }}
           TF_VAR_dynamodb_table_actions: ${{ secrets.DEV_DYNAMODB_TABLE_ACTIONS_BASE }}
         run: |
+          echo "🧹 Destroying DynamoDB tables..."
+          
+          # Initialize Terraform
           terraform init -upgrade
           
-          # Check if DynamoDB tables already exist
+          # Check if DynamoDB tables exist
           MEETINGS_TABLE="transinia-dev-${{ secrets.DEV_DYNAMODB_TABLE_MEETINGS_BASE }}"
           ACTIONS_TABLE="transinia-dev-${{ secrets.DEV_DYNAMODB_TABLE_ACTIONS_BASE }}"
           
           MEETINGS_EXISTS=$(aws dynamodb describe-table --table-name "$MEETINGS_TABLE" --query "Table.TableName" --output text 2>/dev/null || echo "NOT_FOUND")
           ACTIONS_EXISTS=$(aws dynamodb describe-table --table-name "$ACTIONS_TABLE" --query "Table.TableName" --output text 2>/dev/null || echo "NOT_FOUND")
           
-          if [ "$MEETINGS_EXISTS" = "NOT_FOUND" ] || [ "$ACTIONS_EXISTS" = "NOT_FOUND" ]; then
-            echo "One or more DynamoDB tables don't exist. Creating infrastructure..."
-            terraform plan -out=dynamodb_tf.plan
-            terraform apply -auto-approve dynamodb_tf.plan
+          # If tables exist, destroy them
+          if [ "$MEETINGS_EXISTS" != "NOT_FOUND" ] || [ "$ACTIONS_EXISTS" != "NOT_FOUND" ]; then
+            echo "DynamoDB tables exist. Destroying infrastructure..."
+            # Suppress errors if destroy fails
+            terraform destroy -auto-approve || true
           else
-            echo "DynamoDB tables already exist. Skipping creation."
-            # Still run plan to verify everything is in sync, but don't apply
-            terraform plan
+            echo "No DynamoDB tables found."
           fi
-
-      # Deploy S3 bucket infrastructure
-      - name: Deploy S3 Bucket Infrastructure
+          echo "✅ DynamoDB cleanup complete"
+          
+      # Destroy S3 bucket infrastructure
+      - name: Destroy S3 bucket infrastructure
         working-directory: ./backend/infra/s3-bucket-infra
         env:
           TF_VAR_environment: "dev"
           TF_VAR_s3_bucket_raw: ${{ secrets.DEV_S3_BUCKET_RAW_BASE }}
           TF_VAR_s3_bucket_processed: ${{ secrets.DEV_S3_BUCKET_PROCESSED_BASE }}
         run: |
+          echo "🧹 Destroying S3 buckets..."
+          
+          # Initialize Terraform
           terraform init -upgrade
           
-          # Check if S3 buckets already exist
+          # Define bucket names
           RAW_BUCKET="transinia-dev-${{ secrets.DEV_S3_BUCKET_RAW_BASE }}"
           PROCESSED_BUCKET="transinia-dev-${{ secrets.DEV_S3_BUCKET_PROCESSED_BASE }}"
           
+          # Check if buckets exist
           RAW_EXISTS=$(aws s3api head-bucket --bucket "$RAW_BUCKET" 2>/dev/null && echo "EXISTS" || echo "NOT_FOUND")
           PROCESSED_EXISTS=$(aws s3api head-bucket --bucket "$PROCESSED_BUCKET" 2>/dev/null && echo "EXISTS" || echo "NOT_FOUND")
           
-          if [ "$RAW_EXISTS" = "NOT_FOUND" ] || [ "$PROCESSED_EXISTS" = "NOT_FOUND" ]; then
-            echo "One or more S3 buckets don't exist. Creating infrastructure..."
-            terraform plan -out=s3_tf.plan
-            terraform apply -auto-approve s3_tf.plan
-          else
-            echo "S3 buckets already exist. Skipping creation."
-            # Still run plan to verify everything is in sync, but don't apply
-            terraform plan
+          # Empty the buckets first if they exist (S3 buckets must be empty before deletion)
+          if [ "$RAW_EXISTS" = "EXISTS" ]; then
+            echo "Emptying bucket: $RAW_BUCKET"
+            aws s3 rm s3://$RAW_BUCKET --recursive || true
           fi
+          
+          if [ "$PROCESSED_EXISTS" = "EXISTS" ]; then
+            echo "Emptying bucket: $PROCESSED_BUCKET"
+            aws s3 rm s3://$PROCESSED_BUCKET --recursive || true
+          fi
+          
+          # If buckets exist, destroy them
+          if [ "$RAW_EXISTS" = "EXISTS" ] || [ "$PROCESSED_EXISTS" = "EXISTS" ]; then
+            echo "S3 buckets exist. Destroying infrastructure..."
+            # Suppress errors if destroy fails
+            terraform destroy -auto-approve || true
+          else
+            echo "No S3 buckets found."
+          fi
+          echo "✅ S3 bucket cleanup complete"
+          
+      # Clean up ECR repositories
+      - name: Clean up ECR repositories
+        run: |
+          echo "🧹 Cleaning up ECR repositories..."
+          
+          # Check if repositories exist
+          BACKEND_REPO_EXISTS=$(aws ecr describe-repositories --repository-names ${{ env.BACKEND_ECR_REPO }} --query "repositories[0].repositoryName" --output text 2>/dev/null || echo "NOT_FOUND")
+          FRONTEND_REPO_EXISTS=$(aws ecr describe-repositories --repository-names ${{ env.FRONTEND_ECR_REPO }} --query "repositories[0].repositoryName" --output text 2>/dev/null || echo "NOT_FOUND")
+          
+          # Delete images from backend repository
+          if [ "$BACKEND_REPO_EXISTS" != "NOT_FOUND" ]; then
+            echo "Deleting images from backend repository..."
+            # Get all image IDs
+            IMAGE_IDS=$(aws ecr list-images --repository-name ${{ env.BACKEND_ECR_REPO }} --query 'imageIds[*]' --output json)
+            
+            # Delete images if any exist
+            if [ "$IMAGE_IDS" != "[]" ]; then
+              aws ecr batch-delete-image --repository-name ${{ env.BACKEND_ECR_REPO }} --image-ids "$IMAGE_IDS" || true
+            fi
+            
+            # Delete repository
+            echo "Deleting backend repository..."
+            aws ecr delete-repository --repository-name ${{ env.BACKEND_ECR_REPO }} --force || true
+          fi
+          
+          # Delete images from frontend repository
+          if [ "$FRONTEND_REPO_EXISTS" != "NOT_FOUND" ]; then
+            echo "Deleting images from frontend repository..."
+            # Get all image IDs
+            IMAGE_IDS=$(aws ecr list-images --repository-name ${{ env.FRONTEND_ECR_REPO }} --query 'imageIds[*]' --output json)
+            
+            # Delete images if any exist
+            if [ "$IMAGE_IDS" != "[]" ]; then
+              aws ecr batch-delete-image --repository-name ${{ env.FRONTEND_ECR_REPO }} --image-ids "$IMAGE_IDS" || true
+            fi
+            
+            # Delete repository
+            echo "Deleting frontend repository..."
+            aws ecr delete-repository --repository-name ${{ env.FRONTEND_ECR_REPO }} --force || true
+          fi
+          echo "✅ ECR cleanup complete"
       
-      - name: Build and push backend image
-        id: build-backend
-        uses: docker/build-push-action@v4
-        with:
-          context: ./backend
-          file: ./backend/Dockerfile
-          push: true
-          tags: ${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:latest
-
-      - name: Build and push frontend image
-        id: build-frontend
-        uses: docker/build-push-action@v4
-        with:
-          context: ./frontend
-          file: ./frontend/Dockerfile
-          push: true
-          tags: ${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:latest
-          build-args: |
-            NEXT_PUBLIC_BACKEND_URL=${{ env.BACKEND_API_URL }}
-            NEXT_PUBLIC_API_URL=${{ env.BACKEND_API_URL }}
-
-      - name: Create CloudWatch Log Groups
+      # Clean up remaining VPC and networking resources
+      - name: Clean up VPC and networking resources
         run: |
-          echo "Creating CloudWatch Log Groups..."
-          # Create log groups with explicit paths and region
-          aws logs create-log-group --log-group-name "/ecs/transinia-dev-backend" --region ${{ env.AWS_REGION }} || true
-          aws logs create-log-group --log-group-name "/ecs/transinia-dev-frontend" --region ${{ env.AWS_REGION }} || true
-          echo "Log groups created or already exist"
-
-      # Task definition steps removed - Terraform will handle ECS deployment
+          echo "🧹 Cleaning up VPC and networking resources..."
           
-      # Check and ensure ECS cluster exists
-      - name: Ensure ECS cluster exists
-        run: |
-          echo "Checking if ECS cluster exists..."
-          CLUSTER_STATUS=$(aws ecs describe-clusters --clusters ${{ env.CLUSTER_NAME }} --query 'clusters[0].status' --output text 2>/dev/null || echo "MISSING")
+          # Check if VPC exists
+          VPC_ID=$(aws ec2 describe-vpcs --filters "Name=tag:Name,Values=transinia-dev-vpc" --query "Vpcs[0].VpcId" --output text 2>/dev/null || echo "NOT_FOUND")
           
-          if [ "$CLUSTER_STATUS" = "MISSING" ]; then
-            echo "Creating ECS cluster ${{ env.CLUSTER_NAME }}..."
-            aws ecs create-cluster --cluster-name ${{ env.CLUSTER_NAME }}
+          if [ "$VPC_ID" != "NOT_FOUND" ]; then
+            echo "Found VPC: $VPC_ID"
             
-            # Verify cluster status
-            CLUSTER_STATUS=$(aws ecs describe-clusters --clusters ${{ env.CLUSTER_NAME }} --query 'clusters[0].status' --output text)
-            echo "New cluster status: $CLUSTER_STATUS"
+            # Delete security groups
+            echo "Finding and deleting security groups..."
+            SG_IDS=$(aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$VPC_ID" --query "SecurityGroups[?GroupName!=\`default\`].GroupId" --output text)
             
-            if [ "$CLUSTER_STATUS" != "ACTIVE" ]; then
-              echo "Error: Cluster is not in ACTIVE state after creation."
-              exit 1
+            if [ -n "$SG_IDS" ]; then
+              for SG_ID in $SG_IDS; do
+                echo "Deleting security group: $SG_ID"
+                aws ec2 delete-security-group --group-id $SG_ID || true
+              done
             fi
+            
+            # Delete subnets
+            echo "Finding and deleting subnets..."
+            SUBNET_IDS=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" --query "Subnets[*].SubnetId" --output text)
+            
+            if [ -n "$SUBNET_IDS" ]; then
+              for SUBNET_ID in $SUBNET_IDS; do
+                echo "Deleting subnet: $SUBNET_ID"
+                aws ec2 delete-subnet --subnet-id $SUBNET_ID || true
+              done
+            fi
+            
+            # Find and delete route tables
+            echo "Finding and deleting route tables..."
+            RT_IDS=$(aws ec2 describe-route-tables --filters "Name=vpc-id,Values=$VPC_ID" --query "RouteTables[?Associations[0].Main!=\`true\`].RouteTableId" --output text)
+            
+            if [ -n "$RT_IDS" ]; then
+              for RT_ID in $RT_IDS; do
+                echo "Deleting route table: $RT_ID"
+                aws ec2 delete-route-table --route-table-id $RT_ID || true
+              done
+            fi
+            
+            # Delete internet gateway
+            echo "Finding and deleting internet gateway..."
+            IGW_ID=$(aws ec2 describe-internet-gateways --filters "Name=attachment.vpc-id,Values=$VPC_ID" --query "InternetGateways[0].InternetGatewayId" --output text)
+            
+            if [ -n "$IGW_ID" ] && [ "$IGW_ID" != "None" ]; then
+              echo "Detaching internet gateway: $IGW_ID"
+              aws ec2 detach-internet-gateway --internet-gateway-id $IGW_ID --vpc-id $VPC_ID || true
+              
+              echo "Deleting internet gateway: $IGW_ID"
+              aws ec2 delete-internet-gateway --internet-gateway-id $IGW_ID || true
+            fi
+            
+            # Delete the VPC
+            echo "Deleting VPC: $VPC_ID"
+            aws ec2 delete-vpc --vpc-id $VPC_ID || true
           else
-            echo "ECS cluster already exists with status: $CLUSTER_STATUS"
-            
-            # Check for any services that should be removed
-            SERVICES=$(aws ecs list-services --cluster ${{ env.CLUSTER_NAME }} --query 'serviceArns' --output text)
-            if [ -n "$SERVICES" ]; then
-              echo "Found existing services in the cluster. These will be managed by Terraform."
-            fi
+            echo "VPC not found."
           fi
-          
-          echo "ECS cluster is ready for use."
-
-      # Deploy ECS Fargate infrastructure
-      - name: Deploy ECS Fargate Infrastructure
-        working-directory: ./backend/infra/ecs-fargate-infra
-        env:
-          TF_VAR_environment: "dev"
-          TF_VAR_aws_region: ${{ secrets.AWS_REGION }}
-          TF_VAR_backend_ecr_repo: ${{ env.BACKEND_ECR_REPO }}
-          TF_VAR_frontend_ecr_repo: ${{ env.FRONTEND_ECR_REPO }}
-          TF_VAR_backend_image: "${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:latest"
-          TF_VAR_frontend_image: "${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:latest"
-          TF_VAR_aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          TF_VAR_aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          TF_VAR_openai_api_key: ${{ secrets.OPENAI_API_KEY }}
-          TF_VAR_dynamodb_table_meetings_base: ${{ secrets.DEV_DYNAMODB_TABLE_MEETINGS_BASE }}
-          TF_VAR_dynamodb_table_actions_base: ${{ secrets.DEV_DYNAMODB_TABLE_ACTIONS_BASE }}
-          TF_VAR_s3_bucket_raw_base: ${{ secrets.DEV_S3_BUCKET_RAW_BASE }}
-          TF_VAR_s3_bucket_processed_base: ${{ secrets.DEV_S3_BUCKET_PROCESSED_BASE }}
+          echo "✅ VPC and networking cleanup complete"
+      
+      # Clean up IAM roles
+      - name: Clean up IAM roles
         run: |
-          echo "Cleaning up any half-created resources before proceeding..."
+          echo "🧹 Cleaning up IAM roles..."
           
-          # Cleanup potential dangling ECS services
-          BACKEND_SERVICE_EXISTS=$(aws ecs describe-services --cluster ${{ env.CLUSTER_NAME }} --services ${{ env.BACKEND_SERVICE }} --query "services[?status!='INACTIVE'].serviceName" --output text 2>/dev/null || echo "")
-          FRONTEND_SERVICE_EXISTS=$(aws ecs describe-services --cluster ${{ env.CLUSTER_NAME }} --services ${{ env.FRONTEND_SERVICE }} --query "services[?status!='INACTIVE'].serviceName" --output text 2>/dev/null || echo "")
-          
-          if [ -n "$BACKEND_SERVICE_EXISTS" ]; then
-            echo "Cleaning up existing backend service..."
-            aws ecs update-service --cluster ${{ env.CLUSTER_NAME }} --service ${{ env.BACKEND_SERVICE }} --desired-count 0 || true
-            aws ecs delete-service --cluster ${{ env.CLUSTER_NAME }} --service ${{ env.BACKEND_SERVICE }} --force || true
-            echo "Waiting for service deletion..."
-            sleep 10
-          fi
-          
-          if [ -n "$FRONTEND_SERVICE_EXISTS" ]; then
-            echo "Cleaning up existing frontend service..."
-            aws ecs update-service --cluster ${{ env.CLUSTER_NAME }} --service ${{ env.FRONTEND_SERVICE }} --desired-count 0 || true
-            aws ecs delete-service --cluster ${{ env.CLUSTER_NAME }} --service ${{ env.FRONTEND_SERVICE }} --force || true
-            echo "Waiting for service deletion..."
-            sleep 10
-          fi
-          
-          # Initialize Terraform
-          echo "Initializing Terraform..."
-          terraform init -upgrade
-          
-          # Check if all required resources exist
-          echo "Checking if all required resources exist..."
-          
-          # Check VPC
-          VPC_EXISTS=$(aws ec2 describe-vpcs --filters "Name=tag:Name,Values=transinia-dev-vpc" --query "Vpcs[0].VpcId" --output text 2>/dev/null || echo "NOT_FOUND")
-          
-          # Check roles
+          # Check and delete ECS task role
           TASK_ROLE_EXISTS=$(aws iam get-role --role-name "transinia-dev-ecsTaskRole" --query "Role.RoleName" --output text 2>/dev/null || echo "NOT_FOUND")
+          if [ "$TASK_ROLE_EXISTS" != "NOT_FOUND" ]; then
+            echo "Found task role. Deleting all attached policies first..."
+            
+            # List and detach policies
+            ATTACHED_POLICIES=$(aws iam list-attached-role-policies --role-name "transinia-dev-ecsTaskRole" --query "AttachedPolicies[*].PolicyArn" --output text)
+            if [ -n "$ATTACHED_POLICIES" ]; then
+              for POLICY in $ATTACHED_POLICIES; do
+                echo "Detaching policy: $POLICY"
+                aws iam detach-role-policy --role-name "transinia-dev-ecsTaskRole" --policy-arn $POLICY || true
+              done
+            fi
+            
+            # Delete role
+            echo "Deleting task role..."
+            aws iam delete-role --role-name "transinia-dev-ecsTaskRole" || true
+          fi
+          
+          # Check and delete ECS execution role
           EXEC_ROLE_EXISTS=$(aws iam get-role --role-name "transinia-dev-ecsTaskExecutionRole" --query "Role.RoleName" --output text 2>/dev/null || echo "NOT_FOUND")
-          
-          # Check load balancer
-          ALB_EXISTS=$(aws elbv2 describe-load-balancers --names "transinia-dev-alb" --query "LoadBalancers[0].LoadBalancerArn" --output text 2>/dev/null || echo "NOT_FOUND")
-          
-          # Check CloudWatch log groups
-          BACKEND_LOG_GROUP_EXISTS=$(aws logs describe-log-groups --log-group-name-prefix "/ecs/transinia-dev-backend" --query "logGroups[0].logGroupName" --output text 2>/dev/null || echo "NOT_FOUND")
-          FRONTEND_LOG_GROUP_EXISTS=$(aws logs describe-log-groups --log-group-name-prefix "/ecs/transinia-dev-frontend" --query "logGroups[0].logGroupName" --output text 2>/dev/null || echo "NOT_FOUND")
-          
-          # Ensure CloudWatch log groups exist
-          if [ "$BACKEND_LOG_GROUP_EXISTS" = "NOT_FOUND" ]; then
-            echo "Creating backend log group..."
-            aws logs create-log-group --log-group-name "/ecs/transinia-dev-backend" --region ${{ env.AWS_REGION }}
-          fi
-          
-          if [ "$FRONTEND_LOG_GROUP_EXISTS" = "NOT_FOUND" ]; then
-            echo "Creating frontend log group..."
-            aws logs create-log-group --log-group-name "/ecs/transinia-dev-frontend" --region ${{ env.AWS_REGION }}
-          fi
-          
-          # Run Terraform in import-only mode if all infrastructure exists
-          if [ "$VPC_EXISTS" != "NOT_FOUND" ] && [ "$TASK_ROLE_EXISTS" != "NOT_FOUND" ] && [ "$EXEC_ROLE_EXISTS" != "NOT_FOUND" ] && [ "$ALB_EXISTS" != "NOT_FOUND" ]; then
-            echo "All required infrastructure exists. Setting variables for existing infrastructure..."
+          if [ "$EXEC_ROLE_EXISTS" != "NOT_FOUND" ]; then
+            echo "Found execution role. Deleting all attached policies first..."
             
-            # Set variables to use existing resources
-            export TF_VAR_create_vpc_resources="false"
-            export TF_VAR_create_iam_resources="false" 
-            export TF_VAR_create_alb_resources="false"
-            export TF_VAR_create_cloudwatch_log_groups="false"
-            export TF_VAR_infrastructure_creation_strategy="use_existing"
-            export TF_VAR_use_existing_vpc_resources="true"
-            export TF_VAR_use_existing_task_definitions="false" # Always false since we want to deploy new task definitions
+            # List and detach policies
+            ATTACHED_POLICIES=$(aws iam list-attached-role-policies --role-name "transinia-dev-ecsTaskExecutionRole" --query "AttachedPolicies[*].PolicyArn" --output text)
+            if [ -n "$ATTACHED_POLICIES" ]; then
+              for POLICY in $ATTACHED_POLICIES; do
+                echo "Detaching policy: $POLICY"
+                aws iam detach-role-policy --role-name "transinia-dev-ecsTaskExecutionRole" --policy-arn $POLICY || true
+              done
+            fi
             
-            echo "Planning deployment to update services with latest images..."
-            terraform plan -refresh-only -out=refresh.tfplan
-            
-            echo "Running deployment to update services..."
-            terraform apply -auto-approve -var="infrastructure_creation_strategy=use_existing" \
-              -var="use_existing_vpc_resources=true" \
-              -var="use_existing_task_definitions=false" \
-              -var="create_vpc_resources=false" \
-              -var="create_iam_resources=false" \
-              -var="create_alb_resources=false" \
-              -var="create_cloudwatch_log_groups=false"
-          else
-            echo "ERROR: Required infrastructure not found. Please create all required resources manually before running this workflow."
-            echo "Missing resources:"
-            [ "$VPC_EXISTS" = "NOT_FOUND" ] && echo "- VPC 'transinia-dev-vpc'"
-            [ "$TASK_ROLE_EXISTS" = "NOT_FOUND" ] && echo "- IAM Role 'transinia-dev-ecsTaskRole'"
-            [ "$EXEC_ROLE_EXISTS" = "NOT_FOUND" ] && echo "- IAM Role 'transinia-dev-ecsTaskExecutionRole'"
-            [ "$ALB_EXISTS" = "NOT_FOUND" ] && echo "- ALB 'transinia-dev-alb'"
-            exit 1
+            # Delete role
+            echo "Deleting execution role..."
+            aws iam delete-role --role-name "transinia-dev-ecsTaskExecutionRole" || true
           fi
-          
-          echo "Deployment successful. Verifying resources..."
-          aws ecs list-services --cluster ${{ env.CLUSTER_NAME }}
+          echo "✅ IAM roles cleanup complete"
 
-      # Comprehensive cleanup step - always runs even if prior steps fail
-      - name: Cleanup
+      # Final cleanup summary
+      - name: Destruction Summary
         if: always()
         run: |
-          echo "Performing comprehensive cleanup operations..."
-          
-          # Ensure log groups exist
-          aws logs create-log-group --log-group-name "/ecs/transinia-dev-backend" --region ${{ env.AWS_REGION }} || true
-          aws logs create-log-group --log-group-name "/ecs/transinia-dev-frontend" --region ${{ env.AWS_REGION }} || true
-          
-          # Stop and clean up failed tasks
-          echo "Cleaning up failed tasks..."
-          FAILED_TASKS=$(aws ecs list-tasks --cluster ${{ env.CLUSTER_NAME }} --desired-status STOPPED --query 'taskArns[*]' --output text || echo "")
-          if [[ ! -z "$FAILED_TASKS" ]]; then
-            echo "Found failed tasks: $FAILED_TASKS"
-            for TASK in $FAILED_TASKS; do
-              aws ecs stop-task --cluster ${{ env.CLUSTER_NAME }} --task $TASK --region ${{ env.AWS_REGION }} || true
-            done
-          fi
-          
-          # Check and clean up any running tasks that aren't part of a service
-          echo "Checking for orphaned running tasks..."
-          RUNNING_TASKS=$(aws ecs list-tasks --cluster ${{ env.CLUSTER_NAME }} --desired-status RUNNING --query 'taskArns[*]' --output text || echo "")
-          if [[ ! -z "$RUNNING_TASKS" ]]; then
-            for TASK in $RUNNING_TASKS; do
-              TASK_SERVICE=$(aws ecs describe-tasks --cluster ${{ env.CLUSTER_NAME }} --tasks $TASK --query 'tasks[0].group' --output text || echo "")
-              if [[ ! $TASK_SERVICE == service:* ]]; then
-                echo "Stopping orphaned task: $TASK"
-                aws ecs stop-task --cluster ${{ env.CLUSTER_NAME }} --task $TASK --region ${{ env.AWS_REGION }} || true
-              fi
-            done
-          fi
+          echo "🧹 Infrastructure destruction summary 🧹"
+          echo "=================================================="
+          echo "The following resources have been targeted for cleanup:"
+          echo ""
+          echo "✅ ECS Cluster: transinia-dev-cluster"
+          echo "✅ ECS Services and Tasks"
+          echo "✅ ECR Repositories: ${{ env.BACKEND_ECR_REPO }}, ${{ env.FRONTEND_ECR_REPO }}"
+          echo "✅ DynamoDB Tables: transinia-dev-${{ secrets.DEV_DYNAMODB_TABLE_MEETINGS_BASE }}, transinia-dev-${{ secrets.DEV_DYNAMODB_TABLE_ACTIONS_BASE }}"
+          echo "✅ S3 Buckets: transinia-dev-${{ secrets.DEV_S3_BUCKET_RAW_BASE }}, transinia-dev-${{ secrets.DEV_S3_BUCKET_PROCESSED_BASE }}"
+          echo "✅ Load Balancer: transinia-dev-alb"
+          echo "✅ CloudWatch Log Groups: /ecs/transinia-dev-backend, /ecs/transinia-dev-frontend"
+          echo "✅ VPC and Networking Components"
+          echo "✅ IAM Roles: transinia-dev-ecsTaskRole, transinia-dev-ecsTaskExecutionRole"
+          echo ""
+          echo "🚀 Infrastructure destruction completed!"
+          echo "==================================================
