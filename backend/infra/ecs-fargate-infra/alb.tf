@@ -31,7 +31,11 @@ data "aws_security_group" "alb" {
 
 # Local value for ALB security group ID
 locals {
-  alb_security_group_id = var.create_security_groups ? aws_security_group.alb[0].id : data.aws_security_group.alb[0].id
+  # Add a fallback to prevent errors during destroy
+  alb_security_group_id = try(
+    var.create_security_groups ? aws_security_group.alb[0].id : data.aws_security_group.alb[0].id,
+    "sg-dummy"
+  )
 }
 
 resource "aws_lb" "app_alb" {

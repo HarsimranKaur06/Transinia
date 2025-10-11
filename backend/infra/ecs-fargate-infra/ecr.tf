@@ -35,6 +35,13 @@ data "aws_ecr_repository" "frontend" {
 
 # Local values for ECR repository references
 locals {
-  ecr_backend_name = var.create_ecr_repositories ? aws_ecr_repository.backend[0].name : data.aws_ecr_repository.backend[0].name
-  ecr_frontend_name = var.create_ecr_repositories ? aws_ecr_repository.frontend[0].name : data.aws_ecr_repository.frontend[0].name
+  # Add fallbacks to prevent errors during destroy
+  ecr_backend_name = try(
+    var.create_ecr_repositories ? aws_ecr_repository.backend[0].name : data.aws_ecr_repository.backend[0].name,
+    "${local.app}-${local.env}-backend"
+  )
+  ecr_frontend_name = try(
+    var.create_ecr_repositories ? aws_ecr_repository.frontend[0].name : data.aws_ecr_repository.frontend[0].name,
+    "${local.app}-${local.env}-frontend"
+  )
 }

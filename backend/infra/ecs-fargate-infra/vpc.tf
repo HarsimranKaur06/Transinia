@@ -41,11 +41,14 @@ data "aws_vpc" "existing" {
 # Local value to use either the created VPC or the data source
 locals {
   # Default VPC ID fallback (replace with actual ID from your environment)
-  vpc_id_default = "vpc-default"
+  vpc_id_default = "vpc-02efdc77d7a260e84"  # From your error output
   
   # Use created resources, existing resources, or fallbacks
-  vpc_id = var.create_vpc_resources ? aws_vpc.main[0].id : (
-    var.use_existing_vpc_resources ? data.aws_vpc.existing[0].id : local.vpc_id_default
+  vpc_id = try(
+    var.create_vpc_resources ? aws_vpc.main[0].id : (
+      var.use_existing_vpc_resources ? data.aws_vpc.existing[0].id : local.vpc_id_default
+    ),
+    local.vpc_id_default
   )
 }
 
@@ -115,17 +118,23 @@ data "aws_subnet" "public_b" {
 
 # Local values for subnet IDs
 locals {
-  # Default fallback IDs if needed (these can be actual IDs from your environment)
-  public_subnet_a_id_default = "subnet-default-a"
-  public_subnet_b_id_default = "subnet-default-b"
+  # Default fallback IDs if needed (use real values from your AWS environment)
+  public_subnet_a_id_default = "subnet-dummy1"
+  public_subnet_b_id_default = "subnet-dummy2"
   
   # Use created resources, existing resources, or fallbacks
-  public_subnet_a_id = var.create_vpc_resources ? aws_subnet.public_a[0].id : (
-    var.use_existing_vpc_resources ? data.aws_subnet.public_a[0].id : local.public_subnet_a_id_default
+  public_subnet_a_id = try(
+    var.create_vpc_resources ? aws_subnet.public_a[0].id : (
+      var.use_existing_vpc_resources ? data.aws_subnet.public_a[0].id : local.public_subnet_a_id_default
+    ),
+    local.public_subnet_a_id_default
   )
   
-  public_subnet_b_id = var.create_vpc_resources ? aws_subnet.public_b[0].id : (
-    var.use_existing_vpc_resources ? data.aws_subnet.public_b[0].id : local.public_subnet_b_id_default
+  public_subnet_b_id = try(
+    var.create_vpc_resources ? aws_subnet.public_b[0].id : (
+      var.use_existing_vpc_resources ? data.aws_subnet.public_b[0].id : local.public_subnet_b_id_default
+    ),
+    local.public_subnet_b_id_default
   )
 }
 

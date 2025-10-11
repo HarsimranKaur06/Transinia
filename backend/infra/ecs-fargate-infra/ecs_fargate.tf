@@ -24,7 +24,11 @@ data "aws_security_group" "tasks" {
 
 # Local value for security group ID
 locals {
-  tasks_security_group_id = var.create_security_groups ? aws_security_group.tasks[0].id : data.aws_security_group.tasks[0].id
+  # Add fallback to prevent errors during destroy
+  tasks_security_group_id = try(
+    var.create_security_groups ? aws_security_group.tasks[0].id : data.aws_security_group.tasks[0].id,
+    "sg-dummy"
+  )
 }
 
 # Allow ALB to connect to backend
