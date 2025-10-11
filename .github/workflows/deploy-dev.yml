@@ -248,8 +248,39 @@ jobs:
             CREATE_IAM="true"
           fi
           
+          # Set our new infrastructure creation strategy variable
+          if [ "$CREATE_VPC" = "true" ] && [ "$CREATE_IAM" = "true" ] && [ "$CREATE_CLOUDWATCH" = "true" ]; then
+            # If everything needs to be created
+            INFRASTRUCTURE_STRATEGY="create_all"
+          elif [ "$CREATE_VPC" = "false" ] && [ "$CREATE_IAM" = "false" ] && [ "$CREATE_CLOUDWATCH" = "false" ]; then
+            # If everything already exists
+            INFRASTRUCTURE_STRATEGY="use_existing"
+          else
+            # Mixed scenario
+            INFRASTRUCTURE_STRATEGY="mixed"
+          fi
+          
+          # Set use_existing flags based on infrastructure strategy
+          USE_EXISTING_VPC="false"
+          USE_EXISTING_TASK_DEFS="false"
+          if [ "$INFRASTRUCTURE_STRATEGY" = "use_existing" ] || [ "$INFRASTRUCTURE_STRATEGY" = "mixed" ]; then
+            # If we're using existing resources, enable the data sources
+            USE_EXISTING_VPC="true"
+            USE_EXISTING_TASK_DEFS="true"
+          fi
+          
           # Combine all variables
-          TERRAFORM_VARS="-var=create_cloudwatch_log_groups=$CREATE_CLOUDWATCH -var=create_vpc_resources=$CREATE_VPC -var=create_iam_resources=$CREATE_IAM -var=create_alb_resources=$CREATE_VPC"
+          TERRAFORM_VARS="-var=infrastructure_creation_strategy=$INFRASTRUCTURE_STRATEGY -var=use_existing_vpc_resources=$USE_EXISTING_VPC -var=use_existing_task_definitions=$USE_EXISTING_TASK_DEFS -var=create_cloudwatch_log_groups=$CREATE_CLOUDWATCH -var=create_vpc_resources=$CREATE_VPC -var=create_iam_resources=$CREATE_IAM -var=create_alb_resources=$CREATE_VPC"
+          
+          # Print the variables we're using
+          echo "Using the following Terraform variables:"
+          echo "infrastructure_creation_strategy = $INFRASTRUCTURE_STRATEGY"
+          echo "use_existing_vpc_resources = $USE_EXISTING_VPC"
+          echo "use_existing_task_definitions = $USE_EXISTING_TASK_DEFS"
+          echo "create_cloudwatch_log_groups = $CREATE_CLOUDWATCH"
+          echo "create_vpc_resources = $CREATE_VPC"
+          echo "create_iam_resources = $CREATE_IAM"
+          echo "create_alb_resources = $CREATE_VPC"
           
           if [ -z "$BACKEND_SERVICE_EXISTS" ] || [ -z "$FRONTEND_SERVICE_EXISTS" ]; then
             echo "One or more ECS services don't exist. Creating infrastructure..."

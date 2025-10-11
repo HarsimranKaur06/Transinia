@@ -54,23 +54,40 @@ resource "aws_ecs_cluster" "main" {
 
 # We don't need to make the cluster conditional as it's lightweight and always needed
 
+# Introducing a new variable to control when to fetch existing task definitions
+variable "use_existing_task_definitions" {
+  type        = bool
+  default     = false
+  description = "Whether to use existing task definitions instead of creating new ones"
+}
+
 # Data sources for task definitions
 data "aws_ecs_task_definition" "backend" {
-  count = var.create_iam_resources ? 0 : 1
+  count = (!var.create_iam_resources && var.use_existing_task_definitions) ? 1 : 0
   
   task_definition = "${local.app}-${local.env}-backend"
 }
 
 data "aws_ecs_task_definition" "frontend" {
-  count = var.create_iam_resources ? 0 : 1
+  count = (!var.create_iam_resources && var.use_existing_task_definitions) ? 1 : 0
   
   task_definition = "${local.app}-${local.env}-frontend"
 }
 
 # Local values for task definition ARNs
 locals {
-  backend_task_definition_arn = var.create_iam_resources ? aws_ecs_task_definition.backend[0].arn : data.aws_ecs_task_definition.backend[0].arn
-  frontend_task_definition_arn = var.create_iam_resources ? aws_ecs_task_definition.frontend[0].arn : data.aws_ecs_task_definition.frontend[0].arn
+  # Fallback to family name when neither creating nor using existing
+  backend_task_definition_family = "${local.app}-${local.env}-backend"
+  frontend_task_definition_family = "${local.app}-${local.env}-frontend"
+  
+  # Use ARN when available, otherwise just use family name
+  backend_task_definition_arn = var.create_iam_resources ? aws_ecs_task_definition.backend[0].arn : (
+    var.use_existing_task_definitions ? data.aws_ecs_task_definition.backend[0].arn : local.backend_task_definition_family
+  )
+  
+  frontend_task_definition_arn = var.create_iam_resources ? aws_ecs_task_definition.frontend[0].arn : (
+    var.use_existing_task_definitions ? data.aws_ecs_task_definition.frontend[0].arn : local.frontend_task_definition_family
+  )
 }
 
 # CloudWatch log groups - using count to conditionally create

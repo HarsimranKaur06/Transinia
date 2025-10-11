@@ -30,7 +30,7 @@ resource "aws_vpc" "main" {
 
 # Data source to fetch existing VPC if not creating one
 data "aws_vpc" "existing" {
-  count = var.create_vpc_resources ? 0 : 1
+  count = (!var.create_vpc_resources && var.use_existing_vpc_resources) ? 1 : 0
   
   filter {
     name   = "tag:Name"
@@ -40,7 +40,13 @@ data "aws_vpc" "existing" {
 
 # Local value to use either the created VPC or the data source
 locals {
-  vpc_id = var.create_vpc_resources ? aws_vpc.main[0].id : data.aws_vpc.existing[0].id
+  # Default VPC ID fallback (replace with actual ID from your environment)
+  vpc_id_default = "vpc-default"
+  
+  # Use created resources, existing resources, or fallbacks
+  vpc_id = var.create_vpc_resources ? aws_vpc.main[0].id : (
+    var.use_existing_vpc_resources ? data.aws_vpc.existing[0].id : local.vpc_id_default
+  )
 }
 
 resource "aws_internet_gateway" "igw" {
@@ -71,9 +77,16 @@ resource "aws_subnet" "public_b" {
   tags                    = merge(local.tags, { Name = "${local.app}-${local.env}-subnet-public-b" })
 }
 
+# Add variable to control data sources for VPC resources
+variable "use_existing_vpc_resources" {
+  type        = bool
+  default     = false
+  description = "Whether to use data sources to lookup existing VPC resources"
+}
+
 # Data sources to fetch existing subnets if not creating them
 data "aws_subnet" "public_a" {
-  count = var.create_vpc_resources ? 0 : 1
+  count = (!var.create_vpc_resources && var.use_existing_vpc_resources) ? 1 : 0
   
   filter {
     name   = "tag:Name"
@@ -82,7 +95,7 @@ data "aws_subnet" "public_a" {
 }
 
 data "aws_subnet" "public_b" {
-  count = var.create_vpc_resources ? 0 : 1
+  count = (!var.create_vpc_resources && var.use_existing_vpc_resources) ? 1 : 0
   
   filter {
     name   = "tag:Name"
@@ -92,8 +105,18 @@ data "aws_subnet" "public_b" {
 
 # Local values for subnet IDs
 locals {
-  public_subnet_a_id = var.create_vpc_resources ? aws_subnet.public_a[0].id : data.aws_subnet.public_a[0].id
-  public_subnet_b_id = var.create_vpc_resources ? aws_subnet.public_b[0].id : data.aws_subnet.public_b[0].id
+  # Default fallback IDs if needed (these can be actual IDs from your environment)
+  public_subnet_a_id_default = "subnet-default-a"
+  public_subnet_b_id_default = "subnet-default-b"
+  
+  # Use created resources, existing resources, or fallbacks
+  public_subnet_a_id = var.create_vpc_resources ? aws_subnet.public_a[0].id : (
+    var.use_existing_vpc_resources ? data.aws_subnet.public_a[0].id : local.public_subnet_a_id_default
+  )
+  
+  public_subnet_b_id = var.create_vpc_resources ? aws_subnet.public_b[0].id : (
+    var.use_existing_vpc_resources ? data.aws_subnet.public_b[0].id : local.public_subnet_b_id_default
+  )
 }
 
 resource "aws_route_table" "public" {
@@ -104,7 +127,7 @@ resource "aws_route_table" "public" {
 }
 
 data "aws_route_table" "public" {
-  count = var.create_vpc_resources ? 0 : 1
+  count = (!var.create_vpc_resources && var.use_existing_vpc_resources) ? 1 : 0
   
   filter {
     name   = "tag:Name"
@@ -113,7 +136,13 @@ data "aws_route_table" "public" {
 }
 
 locals {
-  public_route_table_id = var.create_vpc_resources ? aws_route_table.public[0].id : data.aws_route_table.public[0].id
+  # Default route table ID fallback
+  public_route_table_id_default = "rtb-default-public"
+  
+  # Use created resources, existing resources, or fallbacks
+  public_route_table_id = var.create_vpc_resources ? aws_route_table.public[0].id : (
+    var.use_existing_vpc_resources ? data.aws_route_table.public[0].id : local.public_route_table_id_default
+  )
 }
 
 resource "aws_route" "public_igw" {
@@ -176,7 +205,7 @@ resource "aws_subnet" "private_b" {
 
 # Data sources to fetch existing private subnets if not creating them
 data "aws_subnet" "private_a" {
-  count = var.create_vpc_resources ? 0 : 1
+  count = (!var.create_vpc_resources && var.use_existing_vpc_resources) ? 1 : 0
   
   filter {
     name   = "tag:Name"
@@ -185,7 +214,7 @@ data "aws_subnet" "private_a" {
 }
 
 data "aws_subnet" "private_b" {
-  count = var.create_vpc_resources ? 0 : 1
+  count = (!var.create_vpc_resources && var.use_existing_vpc_resources) ? 1 : 0
   
   filter {
     name   = "tag:Name"
@@ -195,8 +224,19 @@ data "aws_subnet" "private_b" {
 
 # Local values for private subnet IDs
 locals {
-  private_subnet_a_id = var.create_vpc_resources ? aws_subnet.private_a[0].id : data.aws_subnet.private_a[0].id
-  private_subnet_b_id = var.create_vpc_resources ? aws_subnet.private_b[0].id : data.aws_subnet.private_b[0].id
+  # Default private subnet IDs (replace with actual IDs from your environment)
+  private_subnet_a_id_default = "subnet-default-private-a"
+  private_subnet_b_id_default = "subnet-default-private-b"
+  
+  # Use created resources, existing resources, or fallbacks
+  private_subnet_a_id = var.create_vpc_resources ? aws_subnet.private_a[0].id : (
+    var.use_existing_vpc_resources ? data.aws_subnet.private_a[0].id : local.private_subnet_a_id_default
+  )
+  
+  private_subnet_b_id = var.create_vpc_resources ? aws_subnet.private_b[0].id : (
+    var.use_existing_vpc_resources ? data.aws_subnet.private_b[0].id : local.private_subnet_b_id_default
+  )
+  
   private_subnet_ids  = [local.private_subnet_a_id, local.private_subnet_b_id]
 }
 
@@ -209,7 +249,7 @@ resource "aws_route_table" "private" {
 
 # Data source for existing private route table
 data "aws_route_table" "private" {
-  count = var.create_vpc_resources ? 0 : 1
+  count = (!var.create_vpc_resources && var.use_existing_vpc_resources) ? 1 : 0
   
   filter {
     name   = "tag:Name"
@@ -219,7 +259,13 @@ data "aws_route_table" "private" {
 
 # Local value for private route table ID
 locals {
-  private_route_table_id = var.create_vpc_resources ? aws_route_table.private[0].id : data.aws_route_table.private[0].id
+  # Default private route table ID fallback
+  private_route_table_id_default = "rtb-default-private"
+  
+  # Use created resources, existing resources, or fallbacks
+  private_route_table_id = var.create_vpc_resources ? aws_route_table.private[0].id : (
+    var.use_existing_vpc_resources ? data.aws_route_table.private[0].id : local.private_route_table_id_default
+  )
 }
 
 resource "aws_route" "private_nat" {
