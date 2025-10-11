@@ -315,7 +315,7 @@ jobs:
           fi
           echo "✅ ECR cleanup complete"
       
-      # Clean up remaining VPC and networking resources
+      # Clean up remaining VPC and networking resources with proper dependency management
       - name: Clean up VPC and networking resources
         run: |
           echo "🧹 Cleaning up VPC and networking resources..."
@@ -326,18 +326,122 @@ jobs:
           if [ "$VPC_ID" != "NOT_FOUND" ]; then
             echo "Found VPC: $VPC_ID"
             
-            # Delete security groups
+            # Step 1: Find all network interfaces (ENIs) in the VPC first and delete them
+            echo "Finding and deleting network interfaces in VPC..."
+            ENI_IDS=$(aws ec2 describe-network-interfaces --filters "Name=vpc-id,Values=$VPC_ID" --query "NetworkInterfaces[*].NetworkInterfaceId" --output text)
+            
+            if [ -n "$ENI_IDS" ]; then
+              for ENI_ID in $ENI_IDS; do
+                # Check if the ENI has attachments and detach if needed
+                ATTACHMENT=$(aws ec2 describe-network-interfaces --network-interface-ids $ENI_ID --query "NetworkInterfaces[0].Attachment.AttachmentId" --output text 2>/dev/null || echo "")
+                if [ -n "$ATTACHMENT" ] && [ "$ATTACHMENT" != "None" ] && [ "$ATTACHMENT" != "" ]; then
+                  echo "Detaching network interface: $ENI_ID (attachment: $ATTACHMENT)"
+                  aws ec2 detach-network-interface --attachment-id $ATTACHMENT --force || true
+                  # Wait for detachment to complete
+                  sleep 10
+                fi
+                
+                # Delete the ENI
+                echo "Deleting network interface: $ENI_ID"
+                aws ec2 delete-network-interface --network-interface-id $ENI_ID || true
+                sleep 5
+              done
+            fi
+            
+            # Step 2: Check for and delete NAT Gateways
+            echo "Finding and deleting NAT Gateways..."
+            NAT_IDS=$(aws ec2 describe-nat-gateways --filter "Name=vpc-id,Values=$VPC_ID" --query "NatGateways[*].NatGatewayId" --output text)
+            
+            if [ -n "$NAT_IDS" ]; then
+              for NAT_ID in $NAT_IDS; do
+                echo "Deleting NAT Gateway: $NAT_ID"
+                aws ec2 delete-nat-gateway --nat-gateway-id $NAT_ID || true
+              done
+              # NAT Gateway deletion takes time, wait before proceeding
+              echo "Waiting for NAT Gateways to delete (this may take a few minutes)..."
+              sleep 30
+            fi
+            
+            # Step 3: Check for and release any Elastic IPs
+            echo "Finding and releasing Elastic IPs..."
+            ALLOC_IDS=$(aws ec2 describe-addresses --filters "Name=domain,Values=vpc" --query "Addresses[*].AllocationId" --output text)
+            
+            if [ -n "$ALLOC_IDS" ]; then
+              for ALLOC_ID in $ALLOC_IDS; do
+                echo "Releasing Elastic IP: $ALLOC_ID"
+                aws ec2 release-address --allocation-id $ALLOC_ID || true
+              done
+            fi
+            
+            # Step 4: Find and delete any load balancers (additional check to the one already done)
+            echo "Double-checking for load balancers..."
+            LB_ARNS=$(aws elbv2 describe-load-balancers --query "LoadBalancers[?VpcId=='$VPC_ID'].LoadBalancerArn" --output text)
+            
+            if [ -n "$LB_ARNS" ]; then
+              for LB_ARN in $LB_ARNS; do
+                echo "Deleting load balancer: $LB_ARN"
+                aws elbv2 delete-load-balancer --load-balancer-arn $LB_ARN || true
+              done
+              echo "Waiting for load balancers to be deleted..."
+              sleep 30
+            fi
+            
+            # Step 5: Delete security groups (except default)
             echo "Finding and deleting security groups..."
             SG_IDS=$(aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$VPC_ID" --query "SecurityGroups[?GroupName!=\`default\`].GroupId" --output text)
             
             if [ -n "$SG_IDS" ]; then
               for SG_ID in $SG_IDS; do
                 echo "Deleting security group: $SG_ID"
+                # First, try to remove all ingress rules
+                aws ec2 revoke-security-group-ingress --group-id $SG_ID --ip-permissions "$(aws ec2 describe-security-groups --group-ids $SG_ID --query 'SecurityGroups[0].IpPermissions' --output json)" 2>/dev/null || true
+                # Then, try to remove all egress rules
+                aws ec2 revoke-security-group-egress --group-id $SG_ID --ip-permissions "$(aws ec2 describe-security-groups --group-ids $SG_ID --query 'SecurityGroups[0].IpPermissionsEgress' --output json)" 2>/dev/null || true
+                # Now try to delete the security group
                 aws ec2 delete-security-group --group-id $SG_ID || true
+                sleep 2
               done
             fi
             
-            # Delete subnets
+            # Step 6: Find and detach/delete internet gateways
+            echo "Finding and deleting internet gateways..."
+            IGW_ID=$(aws ec2 describe-internet-gateways --filters "Name=attachment.vpc-id,Values=$VPC_ID" --query "InternetGateways[0].InternetGatewayId" --output text)
+            
+            if [ -n "$IGW_ID" ] && [ "$IGW_ID" != "None" ]; then
+              echo "Detaching internet gateway: $IGW_ID from VPC: $VPC_ID"
+              aws ec2 detach-internet-gateway --internet-gateway-id $IGW_ID --vpc-id $VPC_ID || true
+              sleep 5
+              
+              echo "Deleting internet gateway: $IGW_ID"
+              aws ec2 delete-internet-gateway --internet-gateway-id $IGW_ID || true
+              sleep 5
+            fi
+            
+            # Step 7: Disassociate and delete route tables (except the main one)
+            echo "Finding and deleting route tables..."
+            # First, get all route table associations
+            RT_ASSOC_IDS=$(aws ec2 describe-route-tables --filters "Name=vpc-id,Values=$VPC_ID" --query "RouteTables[*].Associations[?!Main].RouteTableAssociationId" --output text)
+            
+            if [ -n "$RT_ASSOC_IDS" ]; then
+              for RT_ASSOC_ID in $RT_ASSOC_IDS; do
+                echo "Disassociating route table association: $RT_ASSOC_ID"
+                aws ec2 disassociate-route-table --association-id $RT_ASSOC_ID || true
+                sleep 2
+              done
+            fi
+            
+            # Now delete non-main route tables
+            RT_IDS=$(aws ec2 describe-route-tables --filters "Name=vpc-id,Values=$VPC_ID" --query "RouteTables[?Associations[0].Main!=\`true\`].RouteTableId" --output text)
+            
+            if [ -n "$RT_IDS" ]; then
+              for RT_ID in $RT_IDS; do
+                echo "Deleting route table: $RT_ID"
+                aws ec2 delete-route-table --route-table-id $RT_ID || true
+                sleep 2
+              done
+            fi
+            
+            # Step 8: Delete subnets
             echo "Finding and deleting subnets..."
             SUBNET_IDS=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" --query "Subnets[*].SubnetId" --output text)
             
@@ -345,33 +449,11 @@ jobs:
               for SUBNET_ID in $SUBNET_IDS; do
                 echo "Deleting subnet: $SUBNET_ID"
                 aws ec2 delete-subnet --subnet-id $SUBNET_ID || true
+                sleep 2
               done
             fi
             
-            # Find and delete route tables
-            echo "Finding and deleting route tables..."
-            RT_IDS=$(aws ec2 describe-route-tables --filters "Name=vpc-id,Values=$VPC_ID" --query "RouteTables[?Associations[0].Main!=\`true\`].RouteTableId" --output text)
-            
-            if [ -n "$RT_IDS" ]; then
-              for RT_ID in $RT_IDS; do
-                echo "Deleting route table: $RT_ID"
-                aws ec2 delete-route-table --route-table-id $RT_ID || true
-              done
-            fi
-            
-            # Delete internet gateway
-            echo "Finding and deleting internet gateway..."
-            IGW_ID=$(aws ec2 describe-internet-gateways --filters "Name=attachment.vpc-id,Values=$VPC_ID" --query "InternetGateways[0].InternetGatewayId" --output text)
-            
-            if [ -n "$IGW_ID" ] && [ "$IGW_ID" != "None" ]; then
-              echo "Detaching internet gateway: $IGW_ID"
-              aws ec2 detach-internet-gateway --internet-gateway-id $IGW_ID --vpc-id $VPC_ID || true
-              
-              echo "Deleting internet gateway: $IGW_ID"
-              aws ec2 delete-internet-gateway --internet-gateway-id $IGW_ID || true
-            fi
-            
-            # Delete the VPC
+            # Step 9: Finally delete the VPC
             echo "Deleting VPC: $VPC_ID"
             aws ec2 delete-vpc --vpc-id $VPC_ID || true
           else
@@ -379,7 +461,7 @@ jobs:
           fi
           echo "✅ VPC and networking cleanup complete"
       
-      # Clean up IAM roles
+      # Clean up IAM roles with thorough dependency management
       - name: Clean up IAM roles
         run: |
           echo "🧹 Cleaning up IAM roles..."
@@ -387,39 +469,89 @@ jobs:
           # Check and delete ECS task role
           TASK_ROLE_EXISTS=$(aws iam get-role --role-name "transinia-dev-ecsTaskRole" --query "Role.RoleName" --output text 2>/dev/null || echo "NOT_FOUND")
           if [ "$TASK_ROLE_EXISTS" != "NOT_FOUND" ]; then
-            echo "Found task role. Deleting all attached policies first..."
+            echo "Found task role. Cleaning up dependencies..."
             
-            # List and detach policies
+            # Step 1: Check for and remove any instance profiles using the role
+            INSTANCE_PROFILES=$(aws iam list-instance-profiles-for-role --role-name "transinia-dev-ecsTaskRole" --query "InstanceProfiles[*].InstanceProfileName" --output text)
+            if [ -n "$INSTANCE_PROFILES" ]; then
+              for PROFILE in $INSTANCE_PROFILES; do
+                echo "Removing role from instance profile: $PROFILE"
+                aws iam remove-role-from-instance-profile --instance-profile-name $PROFILE --role-name "transinia-dev-ecsTaskRole" || true
+                sleep 2
+              done
+            fi
+            
+            # Step 2: List and detach managed policies
             ATTACHED_POLICIES=$(aws iam list-attached-role-policies --role-name "transinia-dev-ecsTaskRole" --query "AttachedPolicies[*].PolicyArn" --output text)
             if [ -n "$ATTACHED_POLICIES" ]; then
               for POLICY in $ATTACHED_POLICIES; do
                 echo "Detaching policy: $POLICY"
                 aws iam detach-role-policy --role-name "transinia-dev-ecsTaskRole" --policy-arn $POLICY || true
+                sleep 1
               done
             fi
             
-            # Delete role
+            # Step 3: List and delete inline policies
+            INLINE_POLICIES=$(aws iam list-role-policies --role-name "transinia-dev-ecsTaskRole" --query "PolicyNames" --output text)
+            if [ -n "$INLINE_POLICIES" ]; then
+              for POLICY in $INLINE_POLICIES; do
+                echo "Deleting inline policy: $POLICY"
+                aws iam delete-role-policy --role-name "transinia-dev-ecsTaskRole" --policy-name $POLICY || true
+                sleep 1
+              done
+            fi
+            
+            # Step 4: Delete the role with multiple retries in case of dependency issues
             echo "Deleting task role..."
-            aws iam delete-role --role-name "transinia-dev-ecsTaskRole" || true
+            MAX_RETRIES=5
+            for ((i=1; i<=MAX_RETRIES; i++)); do
+              aws iam delete-role --role-name "transinia-dev-ecsTaskRole" && break || echo "Delete attempt $i/$MAX_RETRIES failed, retrying in 10 seconds..."
+              sleep 10
+            done
           fi
           
-          # Check and delete ECS execution role
+          # Check and delete ECS execution role with the same thorough process
           EXEC_ROLE_EXISTS=$(aws iam get-role --role-name "transinia-dev-ecsTaskExecutionRole" --query "Role.RoleName" --output text 2>/dev/null || echo "NOT_FOUND")
           if [ "$EXEC_ROLE_EXISTS" != "NOT_FOUND" ]; then
-            echo "Found execution role. Deleting all attached policies first..."
+            echo "Found execution role. Cleaning up dependencies..."
             
-            # List and detach policies
+            # Step 1: Check for and remove any instance profiles
+            INSTANCE_PROFILES=$(aws iam list-instance-profiles-for-role --role-name "transinia-dev-ecsTaskExecutionRole" --query "InstanceProfiles[*].InstanceProfileName" --output text)
+            if [ -n "$INSTANCE_PROFILES" ]; then
+              for PROFILE in $INSTANCE_PROFILES; do
+                echo "Removing role from instance profile: $PROFILE"
+                aws iam remove-role-from-instance-profile --instance-profile-name $PROFILE --role-name "transinia-dev-ecsTaskExecutionRole" || true
+                sleep 2
+              done
+            fi
+            
+            # Step 2: List and detach managed policies
             ATTACHED_POLICIES=$(aws iam list-attached-role-policies --role-name "transinia-dev-ecsTaskExecutionRole" --query "AttachedPolicies[*].PolicyArn" --output text)
             if [ -n "$ATTACHED_POLICIES" ]; then
               for POLICY in $ATTACHED_POLICIES; do
                 echo "Detaching policy: $POLICY"
                 aws iam detach-role-policy --role-name "transinia-dev-ecsTaskExecutionRole" --policy-arn $POLICY || true
+                sleep 1
               done
             fi
             
-            # Delete role
+            # Step 3: List and delete inline policies
+            INLINE_POLICIES=$(aws iam list-role-policies --role-name "transinia-dev-ecsTaskExecutionRole" --query "PolicyNames" --output text)
+            if [ -n "$INLINE_POLICIES" ]; then
+              for POLICY in $INLINE_POLICIES; do
+                echo "Deleting inline policy: $POLICY"
+                aws iam delete-role-policy --role-name "transinia-dev-ecsTaskExecutionRole" --policy-name $POLICY || true
+                sleep 1
+              done
+            fi
+            
+            # Step 4: Delete the role with multiple retries
             echo "Deleting execution role..."
-            aws iam delete-role --role-name "transinia-dev-ecsTaskExecutionRole" || true
+            MAX_RETRIES=5
+            for ((i=1; i<=MAX_RETRIES; i++)); do
+              aws iam delete-role --role-name "transinia-dev-ecsTaskExecutionRole" && break || echo "Delete attempt $i/$MAX_RETRIES failed, retrying in 10 seconds..."
+              sleep 10
+            done
           fi
           echo "✅ IAM roles cleanup complete"
 
