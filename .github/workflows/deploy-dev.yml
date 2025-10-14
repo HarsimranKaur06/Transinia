@@ -1,14 +1,9 @@
-name: Destroy All Infrastructure (dev)
+name: Deploy Infrastructure (dev)
 
 on:
   push:
     branches: [ dev ]
   workflow_dispatch:
-    inputs:
-      confirm_destroy:
-        description: 'Type YES to confirm destroying all infrastructure'
-        required: true
-        default: 'NO'
 
 env:
   # AWS Settings
@@ -28,19 +23,18 @@ env:
   
   # Resource Names (constructed)
   NAME_PREFIX: transinia-dev
-  BACKEND_ECR_REPO: ${NAME_PREFIX}-backend
-  FRONTEND_ECR_REPO: ${NAME_PREFIX}-frontend
+  BACKEND_ECR_REPO: transinia-dev-backend
+  FRONTEND_ECR_REPO: transinia-dev-frontend
   CLUSTER_NAME: ${NAME_PREFIX}-cluster
   BACKEND_SERVICE: ${NAME_PREFIX}-backend-service
   FRONTEND_SERVICE: ${NAME_PREFIX}-frontend-service
 
 jobs:
-  destroy-all-infrastructure:
+  deploy-infrastructure:
     runs-on: ubuntu-latest
     permissions:
       contents: 'read'
       id-token: 'write'
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.confirm_destroy == 'YES' || github.event_name == 'push'
 
     steps:
       - name: Check out repository
