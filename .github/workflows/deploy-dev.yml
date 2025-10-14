@@ -51,6 +51,7 @@ jobs:
         run: |
           aws ecr describe-repositories --repository-names $BACKEND_ECR_REPO >/dev/null 2>&1 || aws ecr create-repository --repository-name $BACKEND_ECR_REPO
           aws ecr describe-repositories --repository-names $FRONTEND_ECR_REPO >/dev/null 2>&1 || aws ecr create-repository --repository-name $FRONTEND_ECR_REPO
+
       - name: Login to ECR
         uses: aws-actions/amazon-ecr-login@v1
         id: ecr-login
@@ -77,6 +78,7 @@ jobs:
           build-args: |
             NEXT_PUBLIC_BACKEND_URL=${{ env.BACKEND_API_URL }}
             NEXT_PUBLIC_API_URL=${{ env.BACKEND_API_URL }}
+
       - name: Create CloudWatch Log Groups
         run: |
           # Check and create log groups if they don't exist
@@ -84,6 +86,7 @@ jobs:
           for LOG_GROUP in $LOG_GROUPS; do
             aws logs create-log-group --log-group-name "$LOG_GROUP" --region ${{ env.AWS_REGION }} || true
           done
+
       - name: Prepare backend task definition
         run: |
           # Replace placeholders in task definition
@@ -94,10 +97,11 @@ jobs:
           sed -i 's#\${DYNAMODB_TABLE_ACTIONS}#${{ env.DYNAMODB_TABLE_ACTIONS }}#g' .github/ecs/taskdef-backend.json
           sed -i 's#\${AWS_ACCESS_KEY_ID}#${{ secrets.AWS_ACCESS_KEY_ID }}#g' .github/ecs/taskdef-backend.json
           sed -i 's#\${AWS_SECRET_ACCESS_KEY}#${{ secrets.AWS_SECRET_ACCESS_KEY }}#g' .github/ecs/taskdef-backend.json
-          sed -i 's#\${OPENAI_API_KEY}#${{ secrets.OPENAI_API_KEY }}#g' .github/ecs/taskdef-backend.json
+          sed -i 's#\${ENVIRONMENT}#${{ env.ENVIRONMENT }}#g' .github/ecs/taskdef-backend.json
           sed -i 's#\${S3_BUCKET_RAW}#${{ env.S3_BUCKET_RAW }}#g' .github/ecs/taskdef-backend.json
           sed -i 's#\${S3_BUCKET_PROCESSED}#${{ env.S3_BUCKET_PROCESSED }}#g' .github/ecs/taskdef-backend.json
-          
+          sed -i 's#\${OPENAI_API_KEY}#${{ secrets.OPENAI_API_KEY }}#g' .github/ecs/taskdef-backend.json
+
       - name: Render backend task definition
         id: deploy-backend
         uses: aws-actions/amazon-ecs-render-task-definition@v1
@@ -106,7 +110,7 @@ jobs:
           container-name: meeting-bot
           image: ${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:latest
 
-      - name: Register & deploy backend to ECS
+      - name: Deploy backend to ECS
         uses: aws-actions/amazon-ecs-deploy-task-definition@v1
         with:
           task-definition: ${{ steps.deploy-backend.outputs.task-definition }}
@@ -114,322 +118,13 @@ jobs:
           cluster: ${{ env.CLUSTER_NAME }}
           wait-for-service-stability: true
 
-      - name: Prepare frontend task definition
+      - name: Update ECS services
         run: |
-          set -Eeuo pipefail
-          echo "Cleaning up ECR repositories..."
-          
-          BACKEND_REPO_EXISTS=$(aws ecr describe-repositories --repository-names ${{ env.BACKEND_ECR_REPO }} --query "repositories[0].repositoryName" --output text 2>/dev/null || echo "NOT_FOUND")
-          FRONTEND_REPO_EXISTS=$(aws ecr describe-repositories --repository-names ${{ env.FRONTEND_ECR_REPO }} --query "repositories[0].repositoryName" --output text 2>/dev/null || echo "NOT_FOUND")
-          
-          if [ "${BACKEND_REPO_EXISTS}" != "NOT_FOUND" ]; then
-            echo "Deleting images from backend repository..."
-            IMAGE_IDS=$(aws ecr list-images --repository-name ${{ env.BACKEND_ECR_REPO }} --query 'imageIds[*]' --output json)
-            if [ "${IMAGE_IDS}" != "[]" ]; then
-              aws ecr batch-delete-image --repository-name ${{ env.BACKEND_ECR_REPO }} --image-ids "${IMAGE_IDS}" || true
-            fi
-            echo "Deleting backend repository..."
-            aws ecr delete-repository --repository-name ${{ env.BACKEND_ECR_REPO }} --force || true
-          fi
-          
-          if [ "${FRONTEND_REPO_EXISTS}" != "NOT_FOUND" ]; then
-            echo "Deleting images from frontend repository..."
-            IMAGE_IDS=$(aws ecr list-images --repository-name ${{ env.FRONTEND_ECR_REPO }} --query 'imageIds[*]' --output json)
-            if [ "${IMAGE_IDS}" != "[]" ]; then
-              aws ecr batch-delete-image --repository-name ${{ env.FRONTEND_ECR_REPO }} --image-ids "${IMAGE_IDS}" || true
-            fi
-            echo "Deleting frontend repository..."
-            aws ecr delete-repository --repository-name ${{ env.FRONTEND_ECR_REPO }} --force || true
-          fi
-          echo "ECR cleanup complete"
-      
-      - name: Clean up VPC and networking resources
-        env:
-          VPC_ID_OVERRIDE: ${{ secrets.VPC_ID_DEV }}
+          # Update services with force new deployment to pick up changes
+          aws ecs update-service --cluster $CLUSTER_NAME --service $FRONTEND_SERVICE --force-new-deployment
+
+      - name: Wait for services to stabilize
         run: |
-          set -Eeuo pipefail
-          echo "Cleaning up VPC and networking resources..."
-
-          is_valid_vpc_id() {
-            [[ "${1:-}" =~ ^vpc-([0-9a-f]{8}|[0-9a-f]{17})$ ]]
-          }
-
-          VPC_ID="${VPC_ID_OVERRIDE:-}"
-
-          if [ -z "${VPC_ID}" ]; then
-            RAW_VPC_ID=$(aws ec2 describe-vpcs \
-              --filters "Name=tag:Name,Values=transinia-dev-vpc" \
-              --query "Vpcs[0].VpcId" --output text 2>/dev/null || true)
-            if [ "${RAW_VPC_ID}" = "None" ] || [ -z "${RAW_VPC_ID}" ]; then
-              VPC_ID=""
-            else
-              VPC_ID="${RAW_VPC_ID}"
-            fi
-          fi
-
-          if [ -z "${VPC_ID}" ] || ! is_valid_vpc_id "${VPC_ID}"; then
-            echo "VPC not found or invalid ID resolved. Skipping VPC/network cleanup."
-            echo "Resolved VPC_ID='${VPC_ID:-<empty>}'"
-            exit 0
-          fi
-
-          if ! aws ec2 describe-vpcs --vpc-ids "${VPC_ID}" >/dev/null 2>&1; then
-            echo "VPC '${VPC_ID}' does not exist in region '${{ env.AWS_REGION }}'. Skipping."
-            exit 0
-          fi
-
-          echo "Found VPC: ${VPC_ID}"
-
-          echo "Finding and deleting network interfaces in VPC..."
-          ENI_IDS=$(aws ec2 describe-network-interfaces \
-            --filters "Name=vpc-id,Values=${VPC_ID}" \
-            --query "NetworkInterfaces[*].NetworkInterfaceId" --output text)
-          if [ -n "${ENI_IDS}" ]; then
-            for ENI_ID in ${ENI_IDS}; do
-              ATTACHMENT=$(aws ec2 describe-network-interfaces --network-interface-ids "${ENI_ID}" \
-                --query "NetworkInterfaces[0].Attachment.AttachmentId" --output text 2>/dev/null || echo "")
-              if [ -n "${ATTACHMENT}" ] && [ "${ATTACHMENT}" != "None" ]; then
-                echo "Detaching ENI ${ENI_ID} (attachment ${ATTACHMENT})"
-                aws ec2 detach-network-interface --attachment-id "${ATTACHMENT}" --force || true
-                sleep 10
-              fi
-              echo "Deleting ENI ${ENI_ID}"
-              aws ec2 delete-network-interface --network-interface-id "${ENI_ID}" || true
-              sleep 5
-            done
-          fi
-
-          echo "Finding and deleting NAT Gateways..."
-          NAT_IDS=$(aws ec2 describe-nat-gateways \
-            --filter "Name=vpc-id,Values=${VPC_ID}" \
-            --query "NatGateways[*].NatGatewayId" --output text)
-          if [ -n "${NAT_IDS}" ]; then
-            for NAT_ID in ${NAT_IDS}; do
-              echo "Deleting NAT Gateway: ${NAT_ID}"
-              aws ec2 delete-nat-gateway --nat-gateway-id "${NAT_ID}" || true
-            done
-            echo "Waiting for NAT Gateways to delete..."
-            sleep 60
-          fi
-
-          echo "Finding and releasing Elastic IPs (associated in VPC)..."
-          VPC_ENI_ALLOCS=$(aws ec2 describe-addresses \
-            --query "Addresses[?AssociationId!=null && NetworkInterfaceId!=null].{Alloc:AllocationId,Eni:NetworkInterfaceId}" --output json)
-          if [ "${VPC_ENI_ALLOCS}" != "[]" ]; then
-            for ALLOC in $(echo "${VPC_ENI_ALLOCS}" | jq -r '.[] | "\(.Alloc) \(.Eni)"'); do
-              ALLOC_ID=$(echo "${ALLOC}" | awk '{print $1}')
-              ENI_ID=$(echo "${ALLOC}" | awk '{print $2}')
-              ENI_VPC=$(aws ec2 describe-network-interfaces --network-interface-ids "${ENI_ID}" \
-                --query "NetworkInterfaces[0].VpcId" --output text 2>/dev/null || echo "")
-              if [ "${ENI_VPC}" = "${VPC_ID}" ]; then
-                echo "Releasing EIP allocation ${ALLOC_ID} attached via ENI ${ENI_ID}"
-                aws ec2 release-address --allocation-id "${ALLOC_ID}" || true
-              fi
-            done
-          fi
-
-          echo "Double-checking for load balancers..."
-          LB_ARNS=$(aws elbv2 describe-load-balancers \
-            --query "LoadBalancers[?VpcId=='${VPC_ID}'].LoadBalancerArn" --output text || true)
-          if [ -n "${LB_ARNS}" ]; then
-            for LB_ARN in ${LB_ARNS}; do
-              echo "Deleting load balancer: ${LB_ARN}"
-              aws elbv2 delete-load-balancer --load-balancer-arn "${LB_ARN}" || true
-            done
-            echo "Waiting for load balancers to delete..."
-            sleep 60
-          fi
-
-          echo "Finding and deleting security groups..."
-          SG_IDS=$(aws ec2 describe-security-groups \
-            --filters "Name=vpc-id,Values=${VPC_ID}" \
-            --query "SecurityGroups[?GroupName!=\`default\`].GroupId" --output text)
-          if [ -n "${SG_IDS}" ]; then
-            for SG_ID in ${SG_IDS}; do
-              echo "Cleaning and deleting security group: ${SG_ID}"
-              aws ec2 revoke-security-group-ingress --group-id "${SG_ID}" \
-                --ip-permissions "$(aws ec2 describe-security-groups --group-ids "${SG_ID}" \
-                --query 'SecurityGroups[0].IpPermissions' --output json)" 2>/dev/null || true
-              aws ec2 revoke-security-group-egress --group-id "${SG_ID}" \
-                --ip-permissions "$(aws ec2 describe-security-groups --group-ids "${SG_ID}" \
-                --query 'SecurityGroups[0].IpPermissionsEgress' --output json)" 2>/dev/null || true
-              aws ec2 delete-security-group --group-id "${SG_ID}" || true
-              sleep 2
-            done
-          fi
-
-          echo "Finding and deleting internet gateways..."
-          IGW_IDS=$(aws ec2 describe-internet-gateways \
-            --filters "Name=attachment.vpc-id,Values=${VPC_ID}" \
-            --query "InternetGateways[*].InternetGatewayId" --output text)
-          if [ -n "${IGW_IDS}" ]; then
-            for IGW_ID in ${IGW_IDS}; do
-              echo "Detaching and deleting IGW: ${IGW_ID}"
-              aws ec2 detach-internet-gateway --internet-gateway-id "${IGW_ID}" --vpc-id "${VPC_ID}" || true
-              sleep 5
-              aws ec2 delete-internet-gateway --internet-gateway-id "${IGW_ID}" || true
-              sleep 5
-            done
-          fi
-
-          echo "Finding and deleting route tables..."
-          RT_ASSOC_IDS=$(aws ec2 describe-route-tables \
-            --filters "Name=vpc-id,Values=${VPC_ID}" \
-            --query "RouteTables[*].Associations[?!Main].RouteTableAssociationId" --output text)
-          if [ -n "${RT_ASSOC_IDS}" ]; then
-            for RT_ASSOC_ID in ${RT_ASSOC_IDS}; do
-              echo "Disassociating route table association: ${RT_ASSOC_ID}"
-              aws ec2 disassociate-route-table --association-id "${RT_ASSOC_ID}" || true
-              sleep 2
-            done
-          fi
-          RT_IDS=$(aws ec2 describe-route-tables \
-            --filters "Name=vpc-id,Values=${VPC_ID}" \
-            --query "RouteTables[?Associations[0].Main!=\`true\`].RouteTableId" --output text)
-          if [ -n "${RT_IDS}" ]; then
-            for RT_ID in ${RT_IDS}; do
-              echo "Deleting route table: ${RT_ID}"
-              aws ec2 delete-route-table --route-table-id "${RT_ID}" || true
-              sleep 2
-            done
-          fi
-
-          echo "Finding and deleting subnets..."
-          SUBNET_IDS=$(aws ec2 describe-subnets \
-            --filters "Name=vpc-id,Values=${VPC_ID}" \
-            --query "Subnets[*].SubnetId" --output text)
-          if [ -n "${SUBNET_IDS}" ]; then
-            for SUBNET_ID in ${SUBNET_IDS}; do
-              echo "Deleting subnet: ${SUBNET_ID}"
-              aws ec2 delete-subnet --subnet-id "${SUBNET_ID}" || true
-              sleep 2
-            done
-          fi
-
-          echo "Deleting VPC: ${VPC_ID}"
-          aws ec2 delete-vpc --vpc-id "${VPC_ID}" || true
-
-          echo "VPC and networking cleanup complete"
-      
-      - name: Clean up IAM roles
-        run: |
-          set -Eeuo pipefail
-          echo "Cleaning up IAM roles..."
-          
-          TASK_ROLE_EXISTS=$(aws iam get-role --role-name "transinia-dev-ecsTaskRole" --query "Role.RoleName" --output text 2>/dev/null || echo "NOT_FOUND")
-          if [ "${TASK_ROLE_EXISTS}" != "NOT_FOUND" ]; then
-            echo "Found task role. Cleaning up dependencies..."
-            
-            INSTANCE_PROFILES=$(aws iam list-instance-profiles-for-role --role-name "transinia-dev-ecsTaskRole" --query "InstanceProfiles[*].InstanceProfileName" --output text)
-            if [ -n "${INSTANCE_PROFILES}" ]; then
-              for PROFILE in ${INSTANCE_PROFILES}; do
-                echo "Removing role from instance profile: ${PROFILE}"
-                aws iam remove-role-from-instance-profile --instance-profile-name "${PROFILE}" --role-name "transinia-dev-ecsTaskRole" || true
-                sleep 2
-              done
-            fi
-            
-            echo "Finding and removing attached policies from task role..."
-            ATTACHED_POLICIES=$(aws iam list-attached-role-policies --role-name "transinia-dev-ecsTaskRole" --query "AttachedPolicies[*].PolicyArn" --output text 2>/dev/null || echo "")
-            if [ -n "${ATTACHED_POLICIES}" ]; then
-              for POLICY in ${ATTACHED_POLICIES}; do
-                echo "Detaching policy: ${POLICY}"
-                aws iam detach-role-policy --role-name "transinia-dev-ecsTaskRole" --policy-arn "${POLICY}" || true
-                sleep 2
-              done
-            else
-              echo "No attached policies found on task role"
-            fi
-            
-            echo "Finding and removing inline policies..."
-            INLINE_POLICIES=$(aws iam list-role-policies --role-name "transinia-dev-ecsTaskRole" --query "PolicyNames" --output text 2>/dev/null || echo "")
-            if [ -n "${INLINE_POLICIES}" ]; then
-              for POLICY in ${INLINE_POLICIES}; do
-                echo "Deleting inline policy: ${POLICY}"
-                aws iam delete-role-policy --role-name "transinia-dev-ecsTaskRole" --policy-name "${POLICY}" || true
-                sleep 2
-              done
-            else
-              echo "No inline policies found"
-            fi
-            
-            echo "Deleting task role..."
-            sleep 5
-            MAX_RETRIES=5
-            for ((i=1; i<=MAX_RETRIES; i++)); do
-              if aws iam get-role --role-name "transinia-dev-ecsTaskRole" &>/dev/null; then
-                echo "Attempt $i/$MAX_RETRIES: Deleting role 'transinia-dev-ecsTaskRole'..."
-                aws iam delete-role --role-name "transinia-dev-ecsTaskRole" && { echo "Role successfully deleted"; break; } || echo "Delete attempt $i/$MAX_RETRIES failed, retrying in 15 seconds..."
-                sleep 15
-              else
-                echo "Role 'transinia-dev-ecsTaskRole' no longer exists, moving on"
-                break
-              fi
-            done
-          fi  cleanup-on-failure:
-    needs: deploy-infrastructure
-    runs-on: ubuntu-latest
-    if: failure()
-    permissions:
-      contents: 'read'
-      id-token: 'write'
-    
-    steps:
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Cleanup ECS Services
-        run: |
-          # Stop ECS services
-          echo "Stopping ECS services..."
-          aws ecs update-service --cluster ${{ env.CLUSTER_NAME }} --service ${{ env.BACKEND_SERVICE }} --desired-count 0 || true
-          aws ecs update-service --cluster ${{ env.CLUSTER_NAME }} --service ${{ env.FRONTEND_SERVICE }} --desired-count 0 || true
-          
-          # Wait for services to drain
-          echo "Waiting for services to drain..."
-          sleep 30
-          
-          # Delete services
-          aws ecs delete-service --cluster ${{ env.CLUSTER_NAME }} --service ${{ env.BACKEND_SERVICE }} --force || true
-          aws ecs delete-service --cluster ${{ env.CLUSTER_NAME }} --service ${{ env.FRONTEND_SERVICE }} --force || true
-
-      - name: Cleanup Task Definitions
-        run: |
-          # Deregister task definitions
-          for TD in $(aws ecs list-task-definitions --family-prefix transinia-dev --status ACTIVE --query 'taskDefinitionArns[]' --output text); do
-            echo "Deregistering task definition: $TD"
-            aws ecs deregister-task-definition --task-definition $TD --query 'taskDefinition.taskDefinitionArn' --output text || true
-          done
-
-      - name: Cleanup Log Groups
-        run: |
-          # Delete log groups
-          for LOG_GROUP in "/ecs/transinia-dev-backend" "/ecs/transinia-dev-frontend"; do
-            echo "Deleting log group: $LOG_GROUP"
-            aws logs delete-log-group --log-group-name "$LOG_GROUP" || true
-          done
-
-      - name: Tag failed resources
-        run: |
-          # Tag resources that failed deployment for tracking
-          FAILED_DEPLOYMENT_ID="${{ needs.deploy-infrastructure.outputs.deployment_id }}"
-          
-          # Tag ECR repositories
-          for REPO in ${{ env.BACKEND_ECR_REPO }} ${{ env.FRONTEND_ECR_REPO }}; do
-            aws ecr tag-resource \
-              --resource-arn "arn:aws:ecr:${{ env.AWS_REGION }}:${{ env.AWS_ACCOUNT_ID }}:repository/$REPO" \
-              --tags Key=FailedDeployment,Value="$FAILED_DEPLOYMENT_ID" || true
-          done
-          
-          # Tag ECS cluster
-          aws ecs tag-resource \
-            --resource-arn "arn:aws:ecs:${{ env.AWS_REGION }}:${{ env.AWS_ACCOUNT_ID }}:cluster/${{ env.CLUSTER_NAME }}" \
-            --tags key=FailedDeployment,value="$FAILED_DEPLOYMENT_ID" || true
-
-      - name: Notify about cleanup
-        run: |
-          echo "::warning::Deployment failed. Cleaned up resources with deployment ID: ${{ needs.deploy-infrastructure.outputs.deployment_id }}"
+          echo "Waiting for services to stabilize..."
+          aws ecs wait services-stable --cluster $CLUSTER_NAME --services $FRONTEND_SERVICE
+          echo "Services are stable"
