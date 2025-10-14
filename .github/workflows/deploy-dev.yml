@@ -10,31 +10,26 @@ env:
   AWS_REGION: ${{ secrets.AWS_REGION }}
   AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
   ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
-  
+
   # Environment
   ENVIRONMENT: dev
   APP_NAME: transinia
-  
+
   # Resource Names (from secrets)
   S3_BUCKET_RAW: ${{ secrets.DEV_S3_BUCKET_RAW }}
   S3_BUCKET_PROCESSED: ${{ secrets.DEV_S3_BUCKET_PROCESSED }}
   DYNAMODB_TABLE_MEETINGS: ${{ secrets.DEV_DYNAMODB_TABLE_MEETINGS }}
   DYNAMODB_TABLE_ACTIONS: ${{ secrets.DEV_DYNAMODB_TABLE_ACTIONS }}
-  
-  # Resource Names (constructed)
+
+  # Base prefix; we will derive the rest into GITHUB_ENV (avoids ${NAME_PREFIX} literal issue)
   NAME_PREFIX: transinia-dev
-  BACKEND_ECR_REPO: transinia-dev-backend
-  FRONTEND_ECR_REPO: transinia-dev-frontend
-  CLUSTER_NAME: ${NAME_PREFIX}-cluster
-  BACKEND_SERVICE: ${NAME_PREFIX}-backend-service
-  FRONTEND_SERVICE: ${NAME_PREFIX}-frontend-service
 
 jobs:
   deploy-infrastructure:
     runs-on: ubuntu-latest
     permissions:
-      contents: 'read'
-      id-token: 'write'
+      contents: read
+      id-token: write
 
     steps:
       - name: Check out repository
@@ -47,16 +42,28 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Derive resource names (cluster + services + repos)
+        run: |
+          echo "CLUSTER_NAME=${NAME_PREFIX}-cluster" >> $GITHUB_ENV
+          echo "BACKEND_ECR_REPO=${NAME_PREFIX}-backend" >> $GITHUB_ENV
+          echo "FRONTEND_ECR_REPO=${NAME_PREFIX}-frontend" >> $GITHUB_ENV
+          echo "BACKEND_SERVICE=${NAME_PREFIX}-backend-service" >> $GITHUB_ENV
+          echo "FRONTEND_SERVICE=${NAME_PREFIX}-frontend-service" >> $GITHUB_ENV
+
       - name: Check and create ECR repositories
         run: |
-          aws ecr describe-repositories --repository-names $BACKEND_ECR_REPO >/dev/null 2>&1 || aws ecr create-repository --repository-name $BACKEND_ECR_REPO
-          aws ecr describe-repositories --repository-names $FRONTEND_ECR_REPO >/dev/null 2>&1 || aws ecr create-repository --repository-name $FRONTEND_ECR_REPO
+          aws ecr describe-repositories --repository-names "$BACKEND_ECR_REPO" >/dev/null 2>&1 || \
+            aws ecr create-repository --repository-name "$BACKEND_ECR_REPO"
+          aws ecr describe-repositories --repository-names "$FRONTEND_ECR_REPO" >/dev/null 2>&1 || \
+            aws ecr create-repository --repository-name "$FRONTEND_ECR_REPO"
 
       - name: Login to ECR
         uses: aws-actions/amazon-ecr-login@v1
         id: ecr-login
         with:
           mask-password: 'true'
+
+      # --- Build & deploy BACKEND first ---
 
       - name: Build and push backend image
         id: build-backend
@@ -66,6 +73,111 @@ jobs:
           file: ./backend/Dockerfile
           push: true
           tags: ${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:latest
+
+      - name: Ensure CloudWatch Log Groups exist
+        run: |
+          set -euo pipefail
+          LOG_GROUPS="/ecs/${NAME_PREFIX}-backend /ecs/${NAME_PREFIX}-frontend"
+          for LOG_GROUP in $LOG_GROUPS; do
+            FOUND=$(aws logs describe-log-groups \
+              --log-group-name-prefix "$LOG_GROUP" \
+              --query "logGroups[?logGroupName=='${LOG_GROUP}'] | length(@)" \
+              --output text)
+            if [ "$FOUND" = "0" ]; then
+              echo "Creating log group: $LOG_GROUP"
+              aws logs create-log-group --log-group-name "$LOG_GROUP" --region "${AWS_REGION}"
+            else
+              echo "Log group already exists: $LOG_GROUP"
+            fi
+          done
+
+      - name: Prepare backend task definition
+        run: |
+          sed -i 's#\${AWS_REGION}#'"${AWS_REGION}"'#g' .github/ecs/taskdef-backend.json
+          sed -i 's#\${ECS_EXECUTION_ROLE_ARN}#arn:aws:iam::'"${AWS_ACCOUNT_ID}"':role/'"${NAME_PREFIX}"'-ecsTaskExecutionRole#g' .github/ecs/taskdef-backend.json
+          sed -i 's#\${ECS_TASK_ROLE_ARN}#arn:aws:iam::'"${AWS_ACCOUNT_ID}"':role/'"${NAME_PREFIX}"'-ecsTaskRole#g' .github/ecs/taskdef-backend.json
+          sed -i 's#\${DYNAMODB_TABLE_MEETINGS}#'"${DYNAMODB_TABLE_MEETINGS}"'#g' .github/ecs/taskdef-backend.json
+          sed -i 's#\${DYNAMODB_TABLE_ACTIONS}#'"${DYNAMODB_TABLE_ACTIONS}"'#g' .github/ecs/taskdef-backend.json
+          sed -i 's#\${AWS_ACCESS_KEY_ID}#'"${{ secrets.AWS_ACCESS_KEY_ID }}"'#g' .github/ecs/taskdef-backend.json
+          sed -i 's#\${AWS_SECRET_ACCESS_KEY}#'"${{ secrets.AWS_SECRET_ACCESS_KEY }}"'#g' .github/ecs/taskdef-backend.json
+          sed -i 's#\${ENVIRONMENT}#'"${ENVIRONMENT}"'#g' .github/ecs/taskdef-backend.json
+          sed -i 's#\${S3_BUCKET_RAW}#'"${S3_BUCKET_RAW}"'#g' .github/ecs/taskdef-backend.json
+          sed -i 's#\${S3_BUCKET_PROCESSED}#'"${S3_BUCKET_PROCESSED}"'#g' .github/ecs/taskdef-backend.json
+          sed -i 's#\${OPENAI_API_KEY}#'"${{ secrets.OPENAI_API_KEY }}"'#g' .github/ecs/taskdef-backend.json
+
+      - name: Render backend task definition
+        id: render-backend
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: .github/ecs/taskdef-backend.json
+          container-name: meeting-bot
+          image: ${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:latest
+
+      - name: Deploy backend to ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.render-backend.outputs.task-definition }}
+          service: ${{ env.BACKEND_SERVICE }}
+          cluster: ${{ env.CLUSTER_NAME }}
+          wait-for-service-stability: true
+
+      # --- Discover ALB URL dynamically (no secrets) ---
+
+      - name: Resolve BACKEND_API_URL from ECS/ALB
+        run: |
+          set -euo pipefail
+          CLUSTER="${CLUSTER_NAME}"
+          SERVICE="${BACKEND_SERVICE}"
+
+          echo "Resolving ALB DNS for cluster=$CLUSTER service=$SERVICE"
+
+          TG_ARN=$(aws ecs describe-services \
+            --cluster "$CLUSTER" \
+            --services "$SERVICE" \
+            --query 'services[0].loadBalancers[0].targetGroupArn' \
+            --output text)
+
+          if [ -z "${TG_ARN:-}" ] || [ "$TG_ARN" = "None" ]; then
+            echo "ERROR: No Target Group associated with ECS service '$SERVICE'."
+            echo "Ensure the service is attached to an ALB target group."
+            exit 1
+          fi
+
+          LB_ARN=$(aws elbv2 describe-target-groups \
+            --target-group-arns "$TG_ARN" \
+            --query 'TargetGroups[0].LoadBalancerArns[0]' \
+            --output text)
+
+          if [ -z "${LB_ARN:-}" ] || [ "$LB_ARN" = "None" ]; then
+            echo "ERROR: Could not resolve Load Balancer ARN from target group."
+            exit 1
+          fi
+
+          DNS=$(aws elbv2 describe-load-balancers \
+            --load-balancer-arns "$LB_ARN" \
+            --query 'LoadBalancers[0].DNSName' \
+            --output text)
+
+          if [ -z "${DNS:-}" ] || [ "$DNS" = "None" ]; then
+            echo "ERROR: Could not resolve ALB DNS name."
+            exit 1
+          fi
+
+          HAS_443=$(aws elbv2 describe-listeners \
+            --load-balancer-arn "$LB_ARN" \
+            --query 'Listeners[?Port==`443`] | length(@)' \
+            --output text)
+
+          SCHEME="http"
+          if [ "$HAS_443" != "0" ]; then
+            SCHEME="https"
+          fi
+
+          URL="${SCHEME}://${DNS}"
+          echo "Resolved BACKEND_API_URL -> ${URL}"
+          echo "BACKEND_API_URL=${URL}" >> "$GITHUB_ENV"
+
+      # --- Build & deploy FRONTEND using discovered URL ---
 
       - name: Build and push frontend image
         id: build-frontend
@@ -78,53 +190,18 @@ jobs:
           build-args: |
             NEXT_PUBLIC_BACKEND_URL=${{ env.BACKEND_API_URL }}
             NEXT_PUBLIC_API_URL=${{ env.BACKEND_API_URL }}
+            NEXT_PUBLIC_ENVIRONMENT=${{ env.ENVIRONMENT }}
 
-      - name: Create CloudWatch Log Groups
+      - name: Force new deployment for frontend service
         run: |
-          # Check and create log groups if they don't exist
-          LOG_GROUPS="/ecs/transinia-dev-backend /ecs/transinia-dev-frontend"
-          for LOG_GROUP in $LOG_GROUPS; do
-            aws logs create-log-group --log-group-name "$LOG_GROUP" --region ${{ env.AWS_REGION }} || true
-          done
+          aws ecs update-service \
+            --cluster "$CLUSTER_NAME" \
+            --service "$FRONTEND_SERVICE" \
+            --force-new-deployment
 
-      - name: Prepare backend task definition
+      - name: Wait for frontend service to stabilize
         run: |
-          # Replace placeholders in task definition
-          sed -i 's#\${AWS_REGION}#${{ env.AWS_REGION }}#g' .github/ecs/taskdef-backend.json
-          sed -i 's#\${ECS_EXECUTION_ROLE_ARN}#arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/transinia-dev-ecsTaskExecutionRole#g' .github/ecs/taskdef-backend.json
-          sed -i 's#\${ECS_TASK_ROLE_ARN}#arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/transinia-dev-ecsTaskRole#g' .github/ecs/taskdef-backend.json
-          sed -i 's#\${DYNAMODB_TABLE_MEETINGS}#${{ env.DYNAMODB_TABLE_MEETINGS }}#g' .github/ecs/taskdef-backend.json
-          sed -i 's#\${DYNAMODB_TABLE_ACTIONS}#${{ env.DYNAMODB_TABLE_ACTIONS }}#g' .github/ecs/taskdef-backend.json
-          sed -i 's#\${AWS_ACCESS_KEY_ID}#${{ secrets.AWS_ACCESS_KEY_ID }}#g' .github/ecs/taskdef-backend.json
-          sed -i 's#\${AWS_SECRET_ACCESS_KEY}#${{ secrets.AWS_SECRET_ACCESS_KEY }}#g' .github/ecs/taskdef-backend.json
-          sed -i 's#\${ENVIRONMENT}#${{ env.ENVIRONMENT }}#g' .github/ecs/taskdef-backend.json
-          sed -i 's#\${S3_BUCKET_RAW}#${{ env.S3_BUCKET_RAW }}#g' .github/ecs/taskdef-backend.json
-          sed -i 's#\${S3_BUCKET_PROCESSED}#${{ env.S3_BUCKET_PROCESSED }}#g' .github/ecs/taskdef-backend.json
-          sed -i 's#\${OPENAI_API_KEY}#${{ secrets.OPENAI_API_KEY }}#g' .github/ecs/taskdef-backend.json
-
-      - name: Render backend task definition
-        id: deploy-backend
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: .github/ecs/taskdef-backend.json
-          container-name: meeting-bot
-          image: ${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:latest
-
-      - name: Deploy backend to ECS
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
-        with:
-          task-definition: ${{ steps.deploy-backend.outputs.task-definition }}
-          service: ${{ env.BACKEND_SERVICE }}
-          cluster: ${{ env.CLUSTER_NAME }}
-          wait-for-service-stability: true
-
-      - name: Update ECS services
-        run: |
-          # Update services with force new deployment to pick up changes
-          aws ecs update-service --cluster $CLUSTER_NAME --service $FRONTEND_SERVICE --force-new-deployment
-
-      - name: Wait for services to stabilize
-        run: |
-          echo "Waiting for services to stabilize..."
-          aws ecs wait services-stable --cluster $CLUSTER_NAME --services $FRONTEND_SERVICE
-          echo "Services are stable"
+          aws ecs wait services-stable \
+            --cluster "$CLUSTER_NAME" \
+            --services "$FRONTEND_SERVICE"
+          echo "Services are stable."
