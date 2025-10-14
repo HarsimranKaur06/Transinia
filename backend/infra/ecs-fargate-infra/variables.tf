@@ -16,27 +16,27 @@ variable "env" {
   default     = "dev"
 }
 
-variable "s3_bucket_raw_base" {
+variable "s3_bucket_raw" {
   type        = string
-  description = "Base name for raw S3 bucket"
+  description = "Name for raw S3 bucket"
   default     = "transcripts"
 }
 
-variable "s3_bucket_processed_base" {
+variable "s3_bucket_processed" {
   type        = string
-  description = "Base name for processed S3 bucket"
+  description = "Name for processed S3 bucket"
   default     = "outputs"
 }
 
-variable "dynamodb_table_meetings_base" {
+variable "dynamodb_table_meetings" {
   type        = string
-  description = "Base name for meetings DynamoDB table"
+  description = "Name for meetings DynamoDB table"
   default     = "meetings"
 }
 
-variable "dynamodb_table_actions_base" {
+variable "dynamodb_table_actions" {
   type        = string
-  description = "Base name for actions DynamoDB table"
+  description = "Name for actions DynamoDB table"
   default     = "actions"
 }
 
@@ -65,6 +65,37 @@ variable "backend_container_port" {
 variable "frontend_container_port" {
   type    = number
   default = 3000
+}
+
+# Control resource creation
+variable "create_cloudwatch_log_groups" {
+  type        = bool
+  default     = true
+  description = "Whether to create CloudWatch log groups or assume they already exist"
+}
+
+variable "create_vpc_resources" {
+  type        = bool
+  default     = true
+  description = "Whether to create VPC and related resources or assume they already exist"
+}
+
+variable "create_alb_resources" {
+  type        = bool
+  default     = true
+  description = "Whether to create ALB and related resources or assume they already exist"
+}
+
+variable "create_iam_resources" {
+  type        = bool
+  default     = true
+  description = "Whether to create IAM roles and policies or assume they already exist"
+}
+
+variable "create_security_groups" {
+  type        = bool
+  default     = true
+  description = "Whether to create security groups or assume they already exist"
 }
 
 # Health check paths (change if your backend uses /api/health)

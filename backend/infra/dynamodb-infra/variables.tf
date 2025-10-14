@@ -1,5 +1,11 @@
 # variables.tf - Variables for Transinia DynamoDB resources
 
+variable "environment" {
+  description = "Environment name (e.g., dev, prod)"
+  default     = "dev"
+  type        = string
+}
+
 variable "aws_region" {
   description = "AWS region where resources will be created"
   type        = string
@@ -31,21 +37,15 @@ variable "dynamodb_table_actions_base" {
 }
 
 variable "dynamodb_table_meetings" {
-  description = "Name of the DynamoDB table for meetings"
+  description = "Base name of the DynamoDB table for meetings (environment will be prefixed)"
   type        = string
-  default     = "meeting-bot-meetings"
+  default     = "meetings"
 }
 
 variable "dynamodb_table_actions" {
-  description = "Name of the DynamoDB table for actions"
+  description = "Base name of the DynamoDB table for actions (environment will be prefixed)"
   type        = string
-  default     = "meeting-bot-actions"
-}
-
-variable "environment" {
-  description = "Deployment environment (e.g., dev, prod)"
-  type        = string
-  default     = "dev"
+  default     = "actions"
 }
 
 variable "project" {

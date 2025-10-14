@@ -4,10 +4,10 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.0"
+      version = "~> 5.31"
     }
   }
-  required_version = ">= 1.2.0"
+  required_version = ">= 1.7.0"
 }
 
 provider "aws" {
@@ -19,8 +19,8 @@ locals {
   name_prefix = "${var.app_name}-${var.env}"
   
   # DynamoDB table names
-  dynamodb_table_meetings = "${local.name_prefix}-${var.dynamodb_table_meetings_base}"
-  dynamodb_table_actions = "${local.name_prefix}-${var.dynamodb_table_actions_base}"
+  dynamodb_table_meetings = "${local.name_prefix}-${var.dynamodb_table_meetings}"
+  dynamodb_table_actions = "${local.name_prefix}-${var.dynamodb_table_actions}"
   
   # Common tags
   common_tags = {

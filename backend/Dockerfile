@@ -1,10 +1,14 @@
 # Backend on latest CPython 3.13 (Debian slim)
 FROM python:3.13-slim
 
+# Build arguments
+ARG ENVIRONMENT=dev
+
 # Fast, safe defaults
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    ENVIRONMENT=${ENVIRONMENT}
 
 WORKDIR /app
 

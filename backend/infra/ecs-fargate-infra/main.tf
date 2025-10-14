@@ -24,10 +24,10 @@ locals {
   name_prefix = "${local.app}-${local.env}"
   
   # Constructed resource names
-  s3_bucket_raw        = "${local.name_prefix}-${var.s3_bucket_raw_base}"
-  s3_bucket_processed  = "${local.name_prefix}-${var.s3_bucket_processed_base}"
-  dynamodb_meetings    = "${local.name_prefix}-${var.dynamodb_table_meetings_base}"
-  dynamodb_actions     = "${local.name_prefix}-${var.dynamodb_table_actions_base}"
+  s3_bucket_raw        = "${local.name_prefix}-${var.s3_bucket_raw}"
+  s3_bucket_processed  = "${local.name_prefix}-${var.s3_bucket_processed}"
+  dynamodb_meetings    = "${local.name_prefix}-${var.dynamodb_table_meetings}"
+  dynamodb_actions     = "${local.name_prefix}-${var.dynamodb_table_actions}"
   
   # ECS resource names
   cluster_name         = "${local.name_prefix}-cluster"

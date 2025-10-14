@@ -32,19 +32,27 @@ logger = logging.getLogger("meeting-bot-local")
 
 @dataclass(frozen=True)
 class Settings:
+    # Environment
+    environment: str = os.getenv("ENVIRONMENT", "dev")
+    
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     # AWS credentials
     aws_access_key_id: str = os.getenv("AWS_ACCESS_KEY_ID", "")
     aws_secret_access_key: str = os.getenv("AWS_SECRET_ACCESS_KEY", "")
     aws_region: str = os.getenv("AWS_REGION", "us-east-1")
-    # S3 buckets
-    s3_bucket_raw: str = os.getenv("S3_BUCKET_RAW", "meeting-bot-transcripts")
-    s3_bucket_processed: str = os.getenv("S3_BUCKET_PROCESSED", "meeting-bot-outputs")
-    # DynamoDB settings
+    
+    # S3 buckets (full names including environment prefix)
+    s3_bucket_raw: str = os.getenv("S3_BUCKET_RAW", "transinia-dev-transcripts")
+    s3_bucket_processed: str = os.getenv("S3_BUCKET_PROCESSED", "transinia-dev-outputs")
+    
+    # DynamoDB settings (full names including environment prefix)
     use_dynamodb: bool = os.getenv("USE_DYNAMODB", "false").lower() in ("true", "1", "yes")
-    dynamodb_table_meetings: str = os.getenv("DYNAMODB_TABLE_MEETINGS", "transinia-meetings")
-    dynamodb_table_actions: str = os.getenv("DYNAMODB_TABLE_ACTIONS", "transinia-actions")
+    dynamodb_table_meetings: str = os.getenv("DYNAMODB_TABLE_MEETINGS", "transinia-dev-meetings")
+    dynamodb_table_actions: str = os.getenv("DYNAMODB_TABLE_ACTIONS", "transinia-dev-actions")
+    
     # Legacy setting for backward compatibility
-    dynamodb_table_name: str = os.getenv("DYNAMODB_TABLE_NAME", "transinia-meetings")
+    @property
+    def dynamodb_table_name(self) -> str:
+        return self.dynamodb_table_meetings
 
 settings = Settings()

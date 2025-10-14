@@ -22,14 +22,14 @@ variable "app_name" {
   type        = string
 }
 
-variable "s3_bucket_raw_base" {
-  description = "Base name for raw transcripts bucket"
+variable "s3_bucket_raw" {
+  description = "Name for raw transcripts bucket"
   default     = "transcripts"
   type        = string
 }
 
-variable "s3_bucket_processed_base" {
-  description = "Base name for processed outputs bucket"
+variable "s3_bucket_processed" {
+  description = "Name for processed outputs bucket"
   default     = "outputs"
   type        = string
 }

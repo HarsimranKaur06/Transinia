@@ -11,7 +11,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.30"
+      version = "~> 5.31"
     }
   }
 }
@@ -25,8 +25,8 @@ locals {
   name_prefix = "${var.app_name}-${var.env}"
   
   # S3 bucket names
-  s3_bucket_raw = "${local.name_prefix}-${var.s3_bucket_raw_base}"
-  s3_bucket_processed = "${local.name_prefix}-${var.s3_bucket_processed_base}"
+  s3_bucket_raw = "${local.name_prefix}-${var.s3_bucket_raw}"
+  s3_bucket_processed = "${local.name_prefix}-${var.s3_bucket_processed}"
   
   # Common tags
   common_tags = {
