@@ -59,6 +59,19 @@ resource "aws_s3_bucket_versioning" "raw_bucket_versioning" {
   }
 }
 
+# Enable CORS for raw bucket
+resource "aws_s3_bucket_cors_configuration" "raw_bucket_cors" {
+  bucket = aws_s3_bucket.raw_bucket.id
+
+  cors_rule {
+    allowed_headers = ["*"]
+    allowed_methods = ["GET", "PUT", "POST", "DELETE", "HEAD"]
+    allowed_origins = ["*"]  # In production, restrict this to your domain
+    expose_headers  = ["ETag"]
+    max_age_seconds = 3000
+  }
+}
+
 # Processed outputs bucket
 resource "aws_s3_bucket" "processed_bucket" {
   bucket = local.s3_bucket_processed
@@ -106,6 +119,19 @@ resource "aws_s3_bucket_versioning" "processed_bucket_versioning" {
   
   versioning_configuration {
     status = "Enabled"
+  }
+}
+
+# Enable CORS for processed bucket
+resource "aws_s3_bucket_cors_configuration" "processed_bucket_cors" {
+  bucket = aws_s3_bucket.processed_bucket.id
+
+  cors_rule {
+    allowed_headers = ["*"]
+    allowed_methods = ["GET", "PUT", "POST", "DELETE", "HEAD"]
+    allowed_origins = ["*"]  # In production, restrict this to your domain
+    expose_headers  = ["ETag"]
+    max_age_seconds = 3000
   }
 }
 
