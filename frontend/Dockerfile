@@ -46,9 +46,10 @@ ENV NODE_ENV=production \
     HOSTNAME=0.0.0.0
 
 # Non-root user
-RUN addgroup -S appgroup \
- && adduser -S appuser -G appgroup -h /home/appuser \
- && mkdir -p /home/appuser
+RUN groupadd -r appgroup || true \
+    && useradd -r -g appgroup -d /home/appuser appuser || true \
+    && mkdir -p /home/appuser \
+    && chown appuser:appgroup /home/appuser
 
 # Copy standalone output
 COPY --from=builder /app/.next/standalone ./

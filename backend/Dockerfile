@@ -43,6 +43,15 @@ RUN echo '#!/bin/sh\n\n# Show environment information\necho "==== ENVIRONMENT VA
 # Set PYTHONPATH to include both app and root directory
 ENV PYTHONPATH=/app:/
 
+# Create non-root user
+RUN groupadd -r appgroup || true \
+    && useradd -r -g appgroup -d /home/appuser appuser || true \
+    && mkdir -p /home/appuser \
+    && chown -R appuser:appgroup /app /home/appuser
+
+# Switch to non-root user
+USER appuser
+
 # Use the original API file but with the import path fixed by symlink
 ENTRYPOINT ["/app/entrypoint.sh", "python", "-m", "uvicorn", "src.api:app"]
 CMD ["--host", "0.0.0.0", "--port", "8001", "--workers", "1"]
