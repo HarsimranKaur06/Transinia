@@ -1,57 +1,51 @@
 # Backend on latest CPython 3.13 (Debian slim)
 FROM python:3.13-slim
 
-# Build arguments
+# Build argument for environment
 ARG ENVIRONMENT=dev
 
-# Fast, safe defaults
+# Environment variables for safety and performance
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     ENVIRONMENT=${ENVIRONMENT}
 
+# Working directory inside the container
 WORKDIR /app
 
-# ---- (optional but recommended) system deps for native wheels on 3.13 ----
-# If your requirements include packages that need compilation (e.g. uvloop, httptools),
-# these keep builds smooth on 3.13. If you don't need them, you can remove.
+# Install essential build tools and certificates
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential gcc curl ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
-# Upgrade pip toolchain (helps with 3.13 wheels)
+# Upgrade pip toolchain (helps with newer Python wheels)
 RUN python -m pip install --upgrade pip setuptools wheel
 
-# ---- Python deps first for better layer caching ----
+# Copy and install Python dependencies first for better caching
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# ---- App code ----
+# Copy all backend source code
 COPY . .
 
-# Expose FastAPI port
-EXPOSE 8001
+# Create a symlink to make "backend.src" imports resolvable
+# (maps /app/backend → /app)
+RUN ln -s . /app/backend
 
-# If uvicorn[standard] pulls uvloop/httptools and they don’t yet have 3.13 wheels on your platform,
-# the build step above allows them to compile. If you *still* hit issues, try forcing pure asyncio:
-# ENV UVICORN_LOOP=asyncio UVICORN_HTTP=h11
+# Add /app to Python path so src imports work anywhere
+ENV PYTHONPATH=/app
 
-# Start the API
-# Create a comprehensive fix script for import issues
-RUN echo '#!/bin/sh\n\n# Show environment information\necho "==== ENVIRONMENT VARIABLES ===="\nenv | sort\necho "==== PYTHON PATH CONTENTS ===="\nfind /app -name "*.py" | sort\necho "=============================="\n\n# Create symbolic link to make backend.src resolve to src\nmkdir -p /backend\nln -sf /app/src /backend/src\n\n# Execute command\nexec "$@"' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
-
-# Set PYTHONPATH to include both app and root directory
-ENV PYTHONPATH=/app:/
-
-# Create non-root user
+# Create non-root user and group
 RUN groupadd -r appgroup || true \
     && useradd -r -g appgroup -d /home/appuser appuser || true \
     && mkdir -p /home/appuser \
     && chown -R appuser:appgroup /app /home/appuser
 
-# Switch to non-root user
+# Switch to non-root user for security
 USER appuser
 
-# Use the original API file but with the import path fixed by symlink
-ENTRYPOINT ["/app/entrypoint.sh", "python", "-m", "uvicorn", "src.api:app"]
-CMD ["--host", "0.0.0.0", "--port", "8001", "--workers", "1"]
+# Expose FastAPI port
+EXPOSE 8001
+
+# Start FastAPI using uvicorn
+CMD ["python", "-m", "uvicorn", "src.api:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "1"]
