@@ -35,8 +35,6 @@ jobs:
     permissions:
       contents: 'read'
       id-token: 'write'
-    outputs:
-      deployment_id: ${{ steps.deployment-id.outputs.id }}
 
     steps:
       - name: Check out repository
@@ -49,32 +47,6 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Generate deployment ID
-        id: deployment-id
-        run: |
-          echo "id=$(date +%Y%m%d%H%M%S)" >> $GITHUB_OUTPUT
-          echo "Deployment ID: $(date +%Y%m%d%H%M%S)"
-          
-      - name: Setup resource management functions
-        run: |
-          # Function to check if a resource exists and create if it doesn't
-          check_and_create_resource() {
-            local resource_type=$1
-            local resource_name=$2
-            local create_cmd=$3
-            local describe_cmd=$4
-            
-            echo "Checking $resource_type: $resource_name"
-            if eval "$describe_cmd"; then
-              echo "$resource_type already exists: $resource_name"
-              return 0
-            else
-              echo "Creating $resource_type: $resource_name"
-              eval "$create_cmd"
-              return $?
-            fi
-          }
-          
       - name: Check and create ECR repositories
         run: |
           aws ecr describe-repositories --repository-names $BACKEND_ECR_REPO >/dev/null 2>&1 || aws ecr create-repository --repository-name $BACKEND_ECR_REPO
@@ -107,14 +79,10 @@ jobs:
             NEXT_PUBLIC_API_URL=${{ env.BACKEND_API_URL }}
       - name: Create CloudWatch Log Groups
         run: |
-          echo "Checking and creating CloudWatch Log Groups if needed..."
-          for LOG_GROUP in "/ecs/transinia-dev-backend" "/ecs/transinia-dev-frontend"; do
-            if ! aws logs describe-log-groups --log-group-name-prefix "$LOG_GROUP" --query "logGroups[?logGroupName=='$LOG_GROUP'].logGroupName" --output text | grep -q "^$LOG_GROUP$"; then
-              echo "Creating log group: $LOG_GROUP"
-              aws logs create-log-group --log-group-name "$LOG_GROUP" --region ${{ env.AWS_REGION }}
-            else
-              echo "Log group already exists: $LOG_GROUP"
-            fi
+          # Check and create log groups if they don't exist
+          LOG_GROUPS="/ecs/transinia-dev-backend /ecs/transinia-dev-frontend"
+          for LOG_GROUP in $LOG_GROUPS; do
+            aws logs create-log-group --log-group-name "$LOG_GROUP" --region ${{ env.AWS_REGION }} || true
           done
       - name: Prepare backend task definition
         run: |

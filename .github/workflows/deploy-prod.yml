@@ -1,14 +1,9 @@
-name: Destroy All Infrastructure (production)
+name: Deploy Infrastructure (production)
 
 on:
   push:
     branches: [ main ]
   workflow_dispatch:
-    inputs:
-      confirm_destroy:
-        description: 'Type YES to confirm destroying all infrastructure'
-        required: true
-        default: 'NO'
 
 env:
   ENVIRONMENT: prod
@@ -23,12 +18,11 @@ env:
   BACKEND_API_URL: http://transinia-prod-alb.us-east-1.elb.amazonaws.com
 
 jobs:
-  destroy-all-infrastructure:
+  deploy-infrastructure:
     runs-on: ubuntu-latest
     permissions:
       contents: 'read'
       id-token: 'write'
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.confirm_destroy == 'YES' || github.event_name == 'push'
 
     steps:
       - name: Check out repository
@@ -77,11 +71,11 @@ jobs:
 
       - name: Create CloudWatch Log Groups
         run: |
-          echo "Creating CloudWatch Log Groups..."
-          # Create log groups with explicit paths and region
-          aws logs create-log-group --log-group-name "/ecs/transinia-prod-backend" --region ${{ env.AWS_REGION }} || true
-          aws logs create-log-group --log-group-name "/ecs/transinia-prod-frontend" --region ${{ env.AWS_REGION }} || true
-          echo "Log groups created or already exist"
+          # Check and create log groups if they don't exist
+          LOG_GROUPS="/ecs/transinia-prod-backend /ecs/transinia-prod-frontend"
+          for LOG_GROUP in $LOG_GROUPS; do
+            aws logs create-log-group --log-group-name "$LOG_GROUP" --region ${{ env.AWS_REGION }} || true
+          done
 
       # Deploy the backend service
       - name: Update backend service
