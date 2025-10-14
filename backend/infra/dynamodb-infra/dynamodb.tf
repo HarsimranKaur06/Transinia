@@ -2,7 +2,7 @@
 
 # Meetings table - stores complete meeting records
 resource "aws_dynamodb_table" "meetings" {
-  name           = var.dynamodb_table_meetings
+  name           = local.dynamodb_table_meetings
   billing_mode   = "PAY_PER_REQUEST"  # On-demand capacity
   hash_key       = "meeting_id"
   range_key      = "date"
@@ -53,17 +53,17 @@ resource "aws_dynamodb_table" "meetings" {
   }
 
   # Tags
-  tags = {
-    Name        = var.dynamodb_table_meetings
-    Environment = var.environment
-    Project     = var.project
-    ManagedBy   = "Terraform"
-  }
+  tags = merge(
+    local.common_tags,
+    {
+      Name = "${local.name_prefix} Meetings Table"
+    }
+  )
 }
 
 # Actions table - stores individual action items for faster querying
 resource "aws_dynamodb_table" "actions" {
-  name           = var.dynamodb_table_actions
+  name           = local.dynamodb_table_actions
   billing_mode   = "PAY_PER_REQUEST"  # On-demand capacity
   hash_key       = "action_id"
   range_key      = "meeting_id"
@@ -115,10 +115,10 @@ resource "aws_dynamodb_table" "actions" {
   }
 
   # Tags
-  tags = {
-    Name        = var.dynamodb_table_actions
-    Environment = var.environment
-    Project     = var.project
-    ManagedBy   = "Terraform"
-  }
+  tags = merge(
+    local.common_tags,
+    {
+      Name = "${local.name_prefix} Actions Table"
+    }
+  )
 }

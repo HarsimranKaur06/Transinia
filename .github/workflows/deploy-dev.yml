@@ -5,15 +5,28 @@ on:
     branches: [ dev ]
 
 env:
+  # AWS Settings
   AWS_REGION: ${{ secrets.AWS_REGION }}
   AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
   ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
-  BACKEND_ECR_REPO: transinia-backend
-  FRONTEND_ECR_REPO: transinia-frontend
-  CLUSTER_NAME: transinia-dev-cluster
-  BACKEND_SERVICE: transinia-dev-backend-service
-  FRONTEND_SERVICE: transinia-dev-frontend-service
-  BACKEND_API_URL: http://transinia-dev-alb-1892657611.us-east-1.elb.amazonaws.com
+  
+  # Environment
+  ENVIRONMENT: dev
+  APP_NAME: transinia
+  
+  # Resource Names (from secrets)
+  S3_BUCKET_RAW: ${{ secrets.DEV_S3_BUCKET_RAW }}
+  S3_BUCKET_PROCESSED: ${{ secrets.DEV_S3_BUCKET_PROCESSED }}
+  DYNAMODB_TABLE_MEETINGS: ${{ secrets.DEV_DYNAMODB_TABLE_MEETINGS }}
+  DYNAMODB_TABLE_ACTIONS: ${{ secrets.DEV_DYNAMODB_TABLE_ACTIONS }}
+  
+  # Resource Names (constructed)
+  NAME_PREFIX: transinia-dev
+  BACKEND_ECR_REPO: ${NAME_PREFIX}-backend
+  FRONTEND_ECR_REPO: ${NAME_PREFIX}-frontend
+  CLUSTER_NAME: ${NAME_PREFIX}-cluster
+  BACKEND_SERVICE: ${NAME_PREFIX}-backend-service
+  FRONTEND_SERVICE: ${NAME_PREFIX}-frontend-service
 
 jobs:
   build-and-deploy:
@@ -39,7 +52,6 @@ jobs:
         run: |
           aws ecr describe-repositories --repository-names $BACKEND_ECR_REPO >/dev/null 2>&1 || aws ecr create-repository --repository-name $BACKEND_ECR_REPO
           aws ecr describe-repositories --repository-names $FRONTEND_ECR_REPO >/dev/null 2>&1 || aws ecr create-repository --repository-name $FRONTEND_ECR_REPO
-
       - name: Login to ECR
         uses: aws-actions/amazon-ecr-login@v1
         id: ecr-login
@@ -66,7 +78,6 @@ jobs:
           build-args: |
             NEXT_PUBLIC_BACKEND_URL=${{ env.BACKEND_API_URL }}
             NEXT_PUBLIC_API_URL=${{ env.BACKEND_API_URL }}
-
       - name: Create CloudWatch Log Groups
         run: |
           echo "Creating CloudWatch Log Groups..."
@@ -74,20 +85,19 @@ jobs:
           aws logs create-log-group --log-group-name "/ecs/transinia-dev-backend" --region ${{ env.AWS_REGION }} || true
           aws logs create-log-group --log-group-name "/ecs/transinia-dev-frontend" --region ${{ env.AWS_REGION }} || true
           echo "Log groups created or already exist"
-
       - name: Prepare backend task definition
         run: |
           # Replace placeholders in task definition
           sed -i 's#\${AWS_REGION}#${{ env.AWS_REGION }}#g' .github/ecs/taskdef-backend.json
           sed -i 's#\${ECS_EXECUTION_ROLE_ARN}#arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/transinia-dev-ecsTaskExecutionRole#g' .github/ecs/taskdef-backend.json
           sed -i 's#\${ECS_TASK_ROLE_ARN}#arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/transinia-dev-ecsTaskRole#g' .github/ecs/taskdef-backend.json
-          sed -i 's#\${DYNAMODB_TABLE_MEETINGS}#${{ secrets.DYNAMODB_TABLE_MEETINGS }}#g' .github/ecs/taskdef-backend.json
-          sed -i 's#\${DYNAMODB_TABLE_ACTIONS}#${{ secrets.DYNAMODB_TABLE_ACTIONS }}#g' .github/ecs/taskdef-backend.json
+          sed -i 's#\${DYNAMODB_TABLE_MEETINGS}#${{ env.DYNAMODB_TABLE_MEETINGS }}#g' .github/ecs/taskdef-backend.json
+          sed -i 's#\${DYNAMODB_TABLE_ACTIONS}#${{ env.DYNAMODB_TABLE_ACTIONS }}#g' .github/ecs/taskdef-backend.json
           sed -i 's#\${AWS_ACCESS_KEY_ID}#${{ secrets.AWS_ACCESS_KEY_ID }}#g' .github/ecs/taskdef-backend.json
           sed -i 's#\${AWS_SECRET_ACCESS_KEY}#${{ secrets.AWS_SECRET_ACCESS_KEY }}#g' .github/ecs/taskdef-backend.json
           sed -i 's#\${OPENAI_API_KEY}#${{ secrets.OPENAI_API_KEY }}#g' .github/ecs/taskdef-backend.json
-          sed -i 's#\${S3_BUCKET_RAW}#${{ secrets.S3_BUCKET_RAW }}#g' .github/ecs/taskdef-backend.json
-          sed -i 's#\${S3_BUCKET_PROCESSED}#${{ secrets.S3_BUCKET_PROCESSED }}#g' .github/ecs/taskdef-backend.json
+          sed -i 's#\${S3_BUCKET_RAW}#${{ env.S3_BUCKET_RAW }}#g' .github/ecs/taskdef-backend.json
+          sed -i 's#\${S3_BUCKET_PROCESSED}#${{ env.S3_BUCKET_PROCESSED }}#g' .github/ecs/taskdef-backend.json
           
       - name: Render backend task definition
         id: deploy-backend

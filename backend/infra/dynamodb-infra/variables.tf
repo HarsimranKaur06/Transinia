@@ -6,16 +6,28 @@ variable "aws_region" {
   default     = "us-east-1"
 }
 
-variable "aws_access_key_id" {
-  description = "AWS access key ID"
+variable "env" {
+  description = "Environment (dev/prod)"
   type        = string
-  sensitive   = true
+  default     = "dev"
 }
 
-variable "aws_secret_access_key" {
-  description = "AWS secret access key"
+variable "app_name" {
+  description = "Application name"
   type        = string
-  sensitive   = true
+  default     = "transinia"
+}
+
+variable "dynamodb_table_meetings_base" {
+  description = "Base name for meetings table"
+  type        = string
+  default     = "meetings"
+}
+
+variable "dynamodb_table_actions_base" {
+  description = "Base name for actions table"
+  type        = string
+  default     = "actions"
 }
 
 variable "dynamodb_table_meetings" {

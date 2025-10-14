@@ -1,16 +1,43 @@
 variable "aws_region" {
-  type    = string
-  default = "us-east-1"
+  type        = string
+  description = "AWS region for resources"
+  default     = "us-east-1"
 }
 
 variable "app_name" {
-  type    = string
-  default = "transinia"
+  type        = string
+  description = "Application name"
+  default     = "transinia"
 }
 
 variable "env" {
-  type    = string
-  default = "dev"
+  type        = string
+  description = "Environment (dev/prod)"
+  default     = "dev"
+}
+
+variable "s3_bucket_raw_base" {
+  type        = string
+  description = "Base name for raw S3 bucket"
+  default     = "transcripts"
+}
+
+variable "s3_bucket_processed_base" {
+  type        = string
+  description = "Base name for processed S3 bucket"
+  default     = "outputs"
+}
+
+variable "dynamodb_table_meetings_base" {
+  type        = string
+  description = "Base name for meetings DynamoDB table"
+  default     = "meetings"
+}
+
+variable "dynamodb_table_actions_base" {
+  type        = string
+  description = "Base name for actions DynamoDB table"
+  default     = "actions"
 }
 
 # VPC CIDRs
@@ -51,26 +78,30 @@ variable "frontend_health_check_path" {
   default = "/"
 }
 
-# Existing S3 buckets (from your .env)
+# Existing S3 buckets - using environment-based naming
 variable "s3_bucket_raw" {
-  type    = string
-  default = "meeting-bot-transcripts"
+  type        = string
+  description = "Raw transcripts S3 bucket name"
+  default     = "transinia-dev-transcripts"  # Will be overridden per environment
 }
 
 variable "s3_bucket_processed" {
-  type    = string
-  default = "meeting-bot-outputs"
+  type        = string
+  description = "Processed outputs S3 bucket name"
+  default     = "transinia-dev-outputs"  # Will be overridden per environment
 }
 
-# Existing DynamoDB tables (from your .env)
+# Existing DynamoDB tables - using environment-based naming
 variable "dynamodb_table_meetings" {
-  type    = string
-  default = "meeting-bot-meetings"
+  type        = string
+  description = "Meetings DynamoDB table name"
+  default     = "transinia-dev-meetings"  # Will be overridden per environment
 }
 
 variable "dynamodb_table_actions" {
-  type    = string
-  default = "meeting-bot-actions"
+  type        = string
+  description = "Actions DynamoDB table name"
+  default     = "transinia-dev-actions"  # Will be overridden per environment
 }
 
 # App envs from .env (no secrets here)

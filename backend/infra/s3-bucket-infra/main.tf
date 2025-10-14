@@ -14,17 +14,24 @@ terraform {
       version = "~> 5.30"
     }
   }
-
-  # Uncomment this section to enable remote state storage in S3
-  # backend "s3" {
-  #   bucket         = "transinia-terraform-state"
-  #   key            = "s3-buckets/terraform.tfstate"
-  #   region         = "us-east-1"
-  #   encrypt        = true
-  #   dynamodb_table = "terraform-locks"
-  # }
 }
 
 provider "aws" {
-  region = "us-east-1"
+  region = var.aws_region
+}
+
+locals {
+  # Resource naming
+  name_prefix = "${var.app_name}-${var.env}"
+  
+  # S3 bucket names
+  s3_bucket_raw = "${local.name_prefix}-${var.s3_bucket_raw_base}"
+  s3_bucket_processed = "${local.name_prefix}-${var.s3_bucket_processed_base}"
+  
+  # Common tags
+  common_tags = {
+    Environment = var.env
+    Application = var.app_name
+    ManagedBy   = "Terraform"
+  }
 }

@@ -4,7 +4,7 @@
   This file defines the variables used in the S3 bucket infrastructure.
 */
 
-variable "environment" {
+variable "env" {
   description = "Environment name (e.g., dev, prod)"
   default     = "dev"
   type        = string
@@ -16,23 +16,22 @@ variable "aws_region" {
   type        = string
 }
 
-variable "s3_bucket_raw" {
-  description = "Name of S3 bucket for raw transcripts"
-  default     = "meeting-bot-transcripts"
+variable "app_name" {
+  description = "Application name"
+  default     = "transinia"
   type        = string
 }
 
-variable "s3_bucket_processed" {
-  description = "Name of S3 bucket for processed outputs"
-  default     = "meeting-bot-outputs"
+variable "s3_bucket_raw_base" {
+  description = "Base name for raw transcripts bucket"
+  default     = "transcripts"
   type        = string
 }
 
-# Local variables for reuse across resources
-locals {
-  common_tags = {
-    Environment = var.environment
-    Project     = "transinia"
-    ManagedBy   = "terraform"
-  }
+variable "s3_bucket_processed_base" {
+  description = "Base name for processed outputs bucket"
+  default     = "outputs"
+  type        = string
 }
+
+# Note: Common tags are defined in main.tf

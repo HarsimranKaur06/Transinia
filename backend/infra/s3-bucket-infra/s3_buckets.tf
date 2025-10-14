@@ -11,12 +11,12 @@
 
 # Raw transcripts bucket
 resource "aws_s3_bucket" "raw_bucket" {
-  bucket = var.s3_bucket_raw
+  bucket = local.s3_bucket_raw
   
   tags = merge(
     local.common_tags,
     {
-      Name = "Meeting Bot Transcripts"
+      Name = "${local.name_prefix} Transcripts"
       Description = "Stores raw meeting transcripts for processing"
     }
   )
@@ -61,12 +61,12 @@ resource "aws_s3_bucket_versioning" "raw_bucket_versioning" {
 
 # Processed outputs bucket
 resource "aws_s3_bucket" "processed_bucket" {
-  bucket = var.s3_bucket_processed
+  bucket = local.s3_bucket_processed
   
   tags = merge(
     local.common_tags,
     {
-      Name = "Meeting Bot Outputs"
+      Name = "${local.name_prefix} Outputs"
       Description = "Stores processed meeting minutes and action items"
     }
   )

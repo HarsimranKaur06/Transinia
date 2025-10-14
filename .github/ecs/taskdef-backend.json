@@ -13,6 +13,7 @@
       "essential": true,
       "portMappings": [ { "containerPort": 8001, "protocol": "tcp" } ],
       "environment": [
+        { "name": "ENVIRONMENT", "value": "${ENVIRONMENT}" },
         { "name": "USE_DYNAMODB", "value": "true" },
         { "name": "AWS_REGION", "value": "${AWS_REGION}" },
         { "name": "DYNAMODB_TABLE_MEETINGS", "value": "${DYNAMODB_TABLE_MEETINGS}" },

@@ -1,5 +1,5 @@
 # ---- Builder ----
-FROM node:20-alpine AS builder
+FROM node:20.9.0-bookworm-slim AS builder
 WORKDIR /app
 
 # Install deps
@@ -32,11 +32,11 @@ RUN echo "NEXT_PUBLIC_BACKEND_URL: $NEXT_PUBLIC_BACKEND_URL" && \
 RUN npm run build
 
 # ---- Runner ----
-FROM node:20-alpine AS runner
+FROM node:20.9.0-bookworm-slim AS runner
 WORKDIR /app
 
 # Install curl for ECS health checks
-RUN apk add --no-cache curl
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 
 # Ensure production mode and explicit bind/port
 ENV NODE_ENV=production \
