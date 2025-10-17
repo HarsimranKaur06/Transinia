@@ -1,9 +1,7 @@
 resource "aws_security_group" "tasks" {
-  count = var.create_security_groups ? 1 : 0
-  
   name        = "${local.app}-${local.env}-tasks-sg"
   description = "Allow ALB to reach tasks"
-  vpc_id      = local.vpc_id
+  vpc_id      = aws_vpc.main.id
   tags        = local.tags
 
   egress {
@@ -14,41 +12,24 @@ resource "aws_security_group" "tasks" {
   }
 }
 
-# Data source for existing security group
-data "aws_security_group" "tasks" {
-  count = var.create_security_groups ? 0 : 1
-  
-  name   = "${local.app}-${local.env}-tasks-sg"
-  vpc_id = local.vpc_id
-}
-
-# Local value for security group ID
-locals {
-  # Add fallback to prevent errors during destroy
-  tasks_security_group_id = try(
-    var.create_security_groups ? aws_security_group.tasks[0].id : data.aws_security_group.tasks[0].id,
-    "sg-dummy"
-  )
-}
-
 # Allow ALB to connect to backend
 resource "aws_security_group_rule" "alb_to_backend" {
   type                     = "ingress"
-  security_group_id        = aws_security_group.tasks[0].id
+  security_group_id        = aws_security_group.tasks.id
   from_port                = var.backend_container_port
   to_port                  = var.backend_container_port
   protocol                 = "tcp"
-  source_security_group_id = aws_security_group.alb[0].id
+  source_security_group_id = aws_security_group.alb.id
 }
 
 # Allow ALB to connect to frontend
 resource "aws_security_group_rule" "alb_to_frontend" {
   type                     = "ingress"
-  security_group_id        = aws_security_group.tasks[0].id
+  security_group_id        = aws_security_group.tasks.id
   from_port                = var.frontend_container_port
   to_port                  = var.frontend_container_port
   protocol                 = "tcp"
-  source_security_group_id = aws_security_group.alb[0].id
+  source_security_group_id = aws_security_group.alb.id
 }
 
 resource "aws_ecs_cluster" "main" {
@@ -56,80 +37,28 @@ resource "aws_ecs_cluster" "main" {
   tags = local.tags
 }
 
-# We don't need to make the cluster conditional as it's lightweight and always needed
-
-# Introducing a new variable to control when to fetch existing task definitions
-variable "use_existing_task_definitions" {
-  type        = bool
-  default     = false
-  description = "Whether to use existing task definitions instead of creating new ones"
-}
-
-# Data sources for task definitions
-data "aws_ecs_task_definition" "backend" {
-  count = (!var.create_iam_resources && var.use_existing_task_definitions) ? 1 : 0
-  
-  task_definition = "${local.app}-${local.env}-backend"
-}
-
-data "aws_ecs_task_definition" "frontend" {
-  count = (!var.create_iam_resources && var.use_existing_task_definitions) ? 1 : 0
-  
-  task_definition = "${local.app}-${local.env}-frontend"
-}
-
-# Local values for task definition ARNs
-locals {
-  # Fallback to family name when neither creating nor using existing
-  backend_task_definition_family = "${local.app}-${local.env}-backend"
-  frontend_task_definition_family = "${local.app}-${local.env}-frontend"
-  
-  # Use ARN when available, otherwise just use family name
-  backend_task_definition_arn = var.create_iam_resources ? aws_ecs_task_definition.backend[0].arn : (
-    var.use_existing_task_definitions ? data.aws_ecs_task_definition.backend[0].arn : local.backend_task_definition_family
-  )
-  
-  frontend_task_definition_arn = var.create_iam_resources ? aws_ecs_task_definition.frontend[0].arn : (
-    var.use_existing_task_definitions ? data.aws_ecs_task_definition.frontend[0].arn : local.frontend_task_definition_family
-  )
-}
-
-# CloudWatch log groups - using count to conditionally create
+# CloudWatch log groups
 resource "aws_cloudwatch_log_group" "backend" {
-  # Only create if it doesn't exist already
-  count = var.create_cloudwatch_log_groups ? 1 : 0
-  
   name              = "/ecs/${local.app}-${local.env}-backend"
   retention_in_days = 14
   tags              = local.tags
 }
 
 resource "aws_cloudwatch_log_group" "frontend" {
-  # Only create if it doesn't exist already
-  count = var.create_cloudwatch_log_groups ? 1 : 0
-  
   name              = "/ecs/${local.app}-${local.env}-frontend"
   retention_in_days = 14
   tags              = local.tags
 }
 
-# Local values for CloudWatch log group names, used regardless of whether we create them
-locals {
-  backend_log_group_name  = "/ecs/${local.app}-${local.env}-backend"
-  frontend_log_group_name = "/ecs/${local.app}-${local.env}-frontend"
-}
-
 # Task definitions
 resource "aws_ecs_task_definition" "backend" {
-  count = var.create_iam_resources ? 1 : 0
-  
   family                   = "${local.app}-${local.env}-backend"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
   cpu                      = "512"
   memory                   = "1024"
-  execution_role_arn       = local.ecs_task_execution_role_arn
-  task_role_arn            = local.ecs_task_role_arn
+  execution_role_arn       = aws_iam_role.ecs_task_execution.arn
+  task_role_arn            = aws_iam_role.ecs_task_role.arn
 
   runtime_platform {
     operating_system_family = "LINUX"
@@ -147,7 +76,7 @@ resource "aws_ecs_task_definition" "backend" {
       logConfiguration = {
         logDriver = "awslogs",
         options = {
-          awslogs-group         = local.backend_log_group_name,
+          awslogs-group         = aws_cloudwatch_log_group.backend.name,
           awslogs-region        = var.aws_region,
           awslogs-stream-prefix = "ecs"
         }
@@ -168,15 +97,13 @@ resource "aws_ecs_task_definition" "backend" {
 }
 
 resource "aws_ecs_task_definition" "frontend" {
-  count = var.create_iam_resources ? 1 : 0
-  
   family                   = "${local.app}-${local.env}-frontend"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
   cpu                      = "256"
   memory                   = "512"
-  execution_role_arn       = local.ecs_task_execution_role_arn
-  task_role_arn            = local.ecs_task_role_arn
+  execution_role_arn       = aws_iam_role.ecs_task_execution.arn
+  task_role_arn            = aws_iam_role.ecs_task_role.arn
 
   runtime_platform {
     operating_system_family = "LINUX"
@@ -194,7 +121,7 @@ resource "aws_ecs_task_definition" "frontend" {
       logConfiguration = {
         logDriver = "awslogs",
         options = {
-          awslogs-group         = local.frontend_log_group_name,
+          awslogs-group         = aws_cloudwatch_log_group.frontend.name,
           awslogs-region        = var.aws_region,
           awslogs-stream-prefix = "ecs"
         }
@@ -205,53 +132,51 @@ resource "aws_ecs_task_definition" "frontend" {
 
 # Services
 resource "aws_ecs_service" "backend" {
-  count = 1 # We don't need to make this conditional as the task definition handles IAM conditionals
-  
   name             = "${local.app}-${local.env}-backend-service"
   cluster          = aws_ecs_cluster.main.id
-  task_definition  = local.backend_task_definition_arn
+  task_definition  = aws_ecs_task_definition.backend.arn
   desired_count    = var.backend_desired_count
   launch_type      = "FARGATE"
   platform_version = "1.4.0"
 
   network_configuration {
-    subnets          = local.private_subnet_ids
-    security_groups  = [local.tasks_security_group_id]
+    subnets          = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+    security_groups  = [aws_security_group.tasks.id]
     assign_public_ip = false
   }
 
 
   load_balancer {
-    target_group_arn = local.backend_target_group_arn
+    target_group_arn = aws_lb_target_group.backend.arn
     container_name   = "meeting-bot"
     container_port   = var.backend_container_port
   }
 
+  depends_on = [aws_lb_listener.http]
   tags       = local.tags
 }
 
 resource "aws_ecs_service" "frontend" {
-  count = 1 # We don't need to make this conditional as the task definition handles IAM conditionals
-  
   name             = "${local.app}-${local.env}-frontend-service"
   cluster          = aws_ecs_cluster.main.id
-  task_definition  = local.frontend_task_definition_arn
+  task_definition  = aws_ecs_task_definition.frontend.arn
   desired_count    = var.frontend_desired_count
   launch_type      = "FARGATE"
   platform_version = "1.4.0"
 
   network_configuration {
-    subnets          = local.private_subnet_ids
-    security_groups  = [local.tasks_security_group_id]
+    subnets          = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+    security_groups  = [aws_security_group.tasks.id]
     assign_public_ip = false
   }
 
 
   load_balancer {
-    target_group_arn = local.frontend_target_group_arn
+    target_group_arn = aws_lb_target_group.frontend.arn
     container_name   = "frontend"
     container_port   = var.frontend_container_port
   }
 
+  depends_on = [aws_lb_listener.http]
   tags       = local.tags
 }

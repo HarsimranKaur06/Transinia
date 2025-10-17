@@ -1,43 +1,16 @@
 variable "aws_region" {
-  type        = string
-  description = "AWS region for resources"
-  default     = "us-east-1"
+  type    = string
+  default = "us-east-1"
 }
 
 variable "app_name" {
-  type        = string
-  description = "Application name"
-  default     = "transinia"
+  type    = string
+  default = "transinia"
 }
 
 variable "env" {
-  type        = string
-  description = "Environment (dev/prod)"
-  default     = "dev"
-}
-
-variable "s3_bucket_raw" {
-  type        = string
-  description = "Name for raw S3 bucket"
-  default     = "transcripts"
-}
-
-variable "s3_bucket_processed" {
-  type        = string
-  description = "Name for processed S3 bucket"
-  default     = "outputs"
-}
-
-variable "dynamodb_table_meetings" {
-  type        = string
-  description = "Name for meetings DynamoDB table"
-  default     = "meetings"
-}
-
-variable "dynamodb_table_actions" {
-  type        = string
-  description = "Name for actions DynamoDB table"
-  default     = "actions"
+  type    = string
+  default = "dev"
 }
 
 # VPC CIDRs
@@ -67,37 +40,6 @@ variable "frontend_container_port" {
   default = 3000
 }
 
-# Control resource creation
-variable "create_cloudwatch_log_groups" {
-  type        = bool
-  default     = true
-  description = "Whether to create CloudWatch log groups or assume they already exist"
-}
-
-variable "create_vpc_resources" {
-  type        = bool
-  default     = true
-  description = "Whether to create VPC and related resources or assume they already exist"
-}
-
-variable "create_alb_resources" {
-  type        = bool
-  default     = true
-  description = "Whether to create ALB and related resources or assume they already exist"
-}
-
-variable "create_iam_resources" {
-  type        = bool
-  default     = true
-  description = "Whether to create IAM roles and policies or assume they already exist"
-}
-
-variable "create_security_groups" {
-  type        = bool
-  default     = true
-  description = "Whether to create security groups or assume they already exist"
-}
-
 # Health check paths (change if your backend uses /api/health)
 variable "backend_health_check_path" {
   type    = string
@@ -109,30 +51,26 @@ variable "frontend_health_check_path" {
   default = "/"
 }
 
-# Existing S3 buckets - using environment-based naming
+# Existing S3 buckets (from your .env)
 variable "s3_bucket_raw" {
-  type        = string
-  description = "Raw transcripts S3 bucket name"
-  default     = "transinia-dev-transcripts"  # Will be overridden per environment
+  type    = string
+  default = "transinia-dev-transcripts"
 }
 
 variable "s3_bucket_processed" {
-  type        = string
-  description = "Processed outputs S3 bucket name"
-  default     = "transinia-dev-outputs"  # Will be overridden per environment
+  type    = string
+  default = "transinia-dev-outputs"
 }
 
-# Existing DynamoDB tables - using environment-based naming
+# Existing DynamoDB tables (from your .env)
 variable "dynamodb_table_meetings" {
-  type        = string
-  description = "Meetings DynamoDB table name"
-  default     = "transinia-dev-meetings"  # Will be overridden per environment
+  type    = string
+  default = "transinia-dev-meetings"
 }
 
 variable "dynamodb_table_actions" {
-  type        = string
-  description = "Actions DynamoDB table name"
-  default     = "transinia-dev-actions"  # Will be overridden per environment
+  type    = string
+  default = "transinia-dev-actions"
 }
 
 # App envs from .env (no secrets here)

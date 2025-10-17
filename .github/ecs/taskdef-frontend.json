@@ -15,8 +15,8 @@
         { "containerPort": 3000, "protocol": "tcp" }
       ],
       "environment": [
-        { "name": "NEXT_PUBLIC_BACKEND_URL", "value": "${BACKEND_API_URL}" },
-        { "name": "NEXT_PUBLIC_API_URL", "value": "${BACKEND_API_URL}" },
+        { "name": "NEXT_PUBLIC_BACKEND_URL", "value": "http://${ALB_DNS_NAME}" },
+        { "name": "NEXT_PUBLIC_API_URL", "value": "http://${ALB_DNS_NAME}/api" },
         { "name": "HOSTNAME", "value": "0.0.0.0" },
         { "name": "HOST", "value": "0.0.0.0" },
         { "name": "PORT", "value": "3000" },

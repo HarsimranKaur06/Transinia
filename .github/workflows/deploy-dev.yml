@@ -1,41 +1,49 @@
-name: CI/CD — build, push to ECR, deploy to ECS (dev)
+name: Deploy Infrastructure (dev)
 
 on:
   push:
     branches: [ dev ]
+  workflow_dispatch:
 
 env:
+  # AWS Settings
   AWS_REGION: ${{ secrets.AWS_REGION }}
   AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
   ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
-  BACKEND_ECR_REPO: transinia-backend
-  FRONTEND_ECR_REPO: transinia-frontend
+  
+  # Environment
+  ENVIRONMENT: dev
+  APP_NAME: transinia
+  
+  # ALB DNS Name (update this after infrastructure deployment)
+  ALB_DNS_NAME: transinia-dev-alb-1060895857.us-east-1.elb.amazonaws.com
+  
+  # Infrastructure Names
+  NAME_PREFIX: transinia-dev
+  BACKEND_ECR_REPO: transinia-dev-backend
+  FRONTEND_ECR_REPO: transinia-dev-frontend
   CLUSTER_NAME: transinia-dev-cluster
   BACKEND_SERVICE: transinia-dev-backend-service
   FRONTEND_SERVICE: transinia-dev-frontend-service
-  BACKEND_API_URL: http://transinia-dev-alb-1892657611.us-east-1.elb.amazonaws.com
-  ENVIRONMENT: dev
+  
+  # Resource Names
+  S3_BUCKET_RAW: ${{ secrets.DEV_S3_BUCKET_RAW }}
+  S3_BUCKET_PROCESSED: ${{ secrets.DEV_S3_BUCKET_PROCESSED }}
+  DYNAMODB_TABLE_MEETINGS: ${{ secrets.DEV_DYNAMODB_TABLE_MEETINGS }}
+  DYNAMODB_TABLE_ACTIONS: ${{ secrets.DEV_DYNAMODB_TABLE_ACTIONS }}
+  TG_ARN: arn:aws:elasticloadbalancing:us-east-1:767397999169:targetgroup/transinia-dev-backend-tg/ec2e3912cc768514
 
 jobs:
-  build-and-deploy:
+  deploy-infrastructure:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      id-token: write
-
-    # always() allows post-cleanup even on failure
-    if: always()
+      contents: 'read'
+      id-token: 'write'
 
     steps:
-      # ---------------------------------------------
-      # Checkout
-      # ---------------------------------------------
       - name: Check out repository
         uses: actions/checkout@v4
 
-      # ---------------------------------------------
-      # Configure AWS credentials
-      # ---------------------------------------------
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
@@ -43,28 +51,16 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # ---------------------------------------------
-      # Create ECR repos if not existing
-      # ---------------------------------------------
       - name: Ensure ECR repositories exist
         run: |
-          aws ecr describe-repositories --repository-names $BACKEND_ECR_REPO >/dev/null 2>&1 || \
-            aws ecr create-repository --repository-name $BACKEND_ECR_REPO
-          aws ecr describe-repositories --repository-names $FRONTEND_ECR_REPO >/dev/null 2>&1 || \
-            aws ecr create-repository --repository-name $FRONTEND_ECR_REPO
+          aws ecr describe-repositories --repository-names $BACKEND_ECR_REPO >/dev/null 2>&1 || aws ecr create-repository --repository-name $BACKEND_ECR_REPO
+          aws ecr describe-repositories --repository-names $FRONTEND_ECR_REPO >/dev/null 2>&1 || aws ecr create-repository --repository-name $FRONTEND_ECR_REPO
 
-      # ---------------------------------------------
-      # Login to ECR
-      # ---------------------------------------------
-      - name: Login to Amazon ECR
+      - name: Login to ECR
         uses: aws-actions/amazon-ecr-login@v1
-        id: ecr-login
         with:
-          mask-password: true
+          mask-password: 'true'
 
-      # ---------------------------------------------
-      # BACKEND: Build and push image
-      # ---------------------------------------------
       - name: Build and push backend image
         id: build-backend
         uses: docker/build-push-action@v4
@@ -72,54 +68,27 @@ jobs:
           context: ./backend
           file: ./backend/Dockerfile
           push: true
-          no-cache: true
-          tags: ${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:latest
+          tags: ${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:latest,${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:${{ github.sha }}
 
-      # ---------------------------------------------
-      # FRONTEND: Build and push image (Node on port 3000)
-      # ---------------------------------------------
-      - name: Build and push frontend image
-        id: build-frontend
-        uses: docker/build-push-action@v4
-        with:
-          context: ./frontend
-          file: ./frontend/Dockerfile
-          push: true
-          no-cache: true
-          tags: ${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:latest
-          build-args: |
-            NEXT_PUBLIC_BACKEND_URL=${{ env.BACKEND_API_URL }}
-            NEXT_PUBLIC_API_URL=${{ env.BACKEND_API_URL }}
-            NEXT_PUBLIC_ENVIRONMENT=${{ env.ENVIRONMENT }}
-
-      # ---------------------------------------------
-      # CloudWatch log groups (ensure exist)
-      # ---------------------------------------------
       - name: Create CloudWatch Log Groups
         run: |
-          echo "Creating CloudWatch log groups..."
           aws logs create-log-group --log-group-name "/ecs/transinia-dev-backend" --region ${{ env.AWS_REGION }} || true
           aws logs create-log-group --log-group-name "/ecs/transinia-dev-frontend" --region ${{ env.AWS_REGION }} || true
-          echo "Log groups confirmed."
 
-      # ---------------------------------------------
-      # Prepare BACKEND task definition
-      # ---------------------------------------------
       - name: Prepare backend task definition
         run: |
           sed -i 's#\${AWS_REGION}#${{ env.AWS_REGION }}#g' .github/ecs/taskdef-backend.json
           sed -i 's#\${ECS_EXECUTION_ROLE_ARN}#arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/transinia-dev-ecsTaskExecutionRole#g' .github/ecs/taskdef-backend.json
           sed -i 's#\${ECS_TASK_ROLE_ARN}#arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/transinia-dev-ecsTaskRole#g' .github/ecs/taskdef-backend.json
-          sed -i 's#\${ENVIRONMENT}#${{ env.ENVIRONMENT }}#g' .github/ecs/taskdef-backend.json
+          sed -i 's#\${DYNAMODB_TABLE_MEETINGS}#${{ env.DYNAMODB_TABLE_MEETINGS }}#g' .github/ecs/taskdef-backend.json
+          sed -i 's#\${DYNAMODB_TABLE_ACTIONS}#${{ env.DYNAMODB_TABLE_ACTIONS }}#g' .github/ecs/taskdef-backend.json
           sed -i 's#\${AWS_ACCESS_KEY_ID}#${{ secrets.AWS_ACCESS_KEY_ID }}#g' .github/ecs/taskdef-backend.json
           sed -i 's#\${AWS_SECRET_ACCESS_KEY}#${{ secrets.AWS_SECRET_ACCESS_KEY }}#g' .github/ecs/taskdef-backend.json
           sed -i 's#\${OPENAI_API_KEY}#${{ secrets.OPENAI_API_KEY }}#g' .github/ecs/taskdef-backend.json
-          sed -i 's#\${S3_BUCKET_RAW}#${{ secrets.S3_BUCKET_RAW }}#g' .github/ecs/taskdef-backend.json
-          sed -i 's#\${S3_BUCKET_PROCESSED}#${{ secrets.S3_BUCKET_PROCESSED }}#g' .github/ecs/taskdef-backend.json
+          sed -i 's#\${S3_BUCKET_RAW}#${{ env.S3_BUCKET_RAW }}#g' .github/ecs/taskdef-backend.json
+          sed -i 's#\${S3_BUCKET_PROCESSED}#${{ env.S3_BUCKET_PROCESSED }}#g' .github/ecs/taskdef-backend.json
+          sed -i 's#\${ENVIRONMENT}#${{ env.ENVIRONMENT }}#g' .github/ecs/taskdef-backend.json
 
-      # ---------------------------------------------
-      # Render BACKEND task definition
-      # ---------------------------------------------
       - name: Render backend task definition
         id: render-backend
         uses: aws-actions/amazon-ecs-render-task-definition@v1
@@ -128,9 +97,6 @@ jobs:
           container-name: meeting-bot
           image: ${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:latest
 
-      # ---------------------------------------------
-      # Deploy BACKEND to ECS
-      # ---------------------------------------------
       - name: Deploy backend service
         uses: aws-actions/amazon-ecs-deploy-task-definition@v1
         with:
@@ -139,9 +105,40 @@ jobs:
           cluster: ${{ env.CLUSTER_NAME }}
           wait-for-service-stability: true
 
-      # ---------------------------------------------
-      # Prepare FRONTEND task definition
-      # ---------------------------------------------
+      - name: Resolve BACKEND_API_URL from Target Group
+        run: |
+          set -euo pipefail
+          LB_ARN=$(aws elbv2 describe-target-groups \
+            --target-group-arns "${TG_ARN}" \
+            --query 'TargetGroups[0].LoadBalancerArns[0]' \
+            --output text)
+          DNS=$(aws elbv2 describe-load-balancers \
+            --load-balancer-arns "$LB_ARN" \
+            --query 'LoadBalancers[0].DNSName' \
+            --output text)
+          HAS_443=$(aws elbv2 describe-listeners \
+            --load-balancer-arn "$LB_ARN" \
+            --query 'Listeners[?Port==`443`] | length(@)' \
+            --output text)
+          SCHEME="http"
+          [ "$HAS_443" != "0" ] && SCHEME="https"
+          URL="${SCHEME}://${DNS}"
+          echo "Resolved BACKEND_API_URL=${URL}"
+          echo "BACKEND_API_URL=${URL}" >> "$GITHUB_ENV"
+
+      - name: Build and push frontend image
+        id: build-frontend
+        uses: docker/build-push-action@v4
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: true
+          tags: ${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:latest,${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:${{ github.sha }}
+          build-args: |
+            NEXT_PUBLIC_BACKEND_URL=http://${{ env.ALB_DNS_NAME }}
+            NEXT_PUBLIC_API_URL=http://${{ env.ALB_DNS_NAME }}/api
+            NEXT_PUBLIC_ENVIRONMENT=${{ env.ENVIRONMENT }}
+
       - name: Prepare frontend task definition
         run: |
           sed -i 's#\${AWS_REGION}#${{ env.AWS_REGION }}#g' .github/ecs/taskdef-frontend.json
@@ -149,9 +146,6 @@ jobs:
           sed -i 's#\${ECS_TASK_ROLE_ARN}#arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/transinia-dev-ecsTaskRole#g' .github/ecs/taskdef-frontend.json
           sed -i 's#\${BACKEND_API_URL}#${{ env.BACKEND_API_URL }}#g' .github/ecs/taskdef-frontend.json
 
-      # ---------------------------------------------
-      # Render FRONTEND task definition
-      # ---------------------------------------------
       - name: Render frontend task definition
         id: render-frontend
         uses: aws-actions/amazon-ecs-render-task-definition@v1
@@ -159,10 +153,9 @@ jobs:
           task-definition: .github/ecs/taskdef-frontend.json
           container-name: frontend
           image: ${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:latest
+        env:
+          ALB_DNS_NAME: ${{ env.ALB_DNS_NAME }}
 
-      # ---------------------------------------------
-      # Deploy FRONTEND to ECS
-      # ---------------------------------------------
       - name: Deploy frontend service
         uses: aws-actions/amazon-ecs-deploy-task-definition@v1
         with:
@@ -171,29 +164,24 @@ jobs:
           cluster: ${{ env.CLUSTER_NAME }}
           wait-for-service-stability: true
 
-      # ---------------------------------------------
-      # Cleanup step (runs even if job fails)
-      # ---------------------------------------------
-      - name: Cleanup post-deploy
+      - name: Force service update for new tasks
+        run: |
+          echo "Forcing ECS service update to pick up latest tasks..."
+          aws ecs update-service --cluster $CLUSTER_NAME --service $BACKEND_SERVICE --force-new-deployment
+          aws ecs update-service --cluster $CLUSTER_NAME --service $FRONTEND_SERVICE --force-new-deployment
+
+      - name: Wait for services to stabilize
+        run: |
+          echo "Waiting for frontend service stabilization..."
+          aws ecs wait services-stable --cluster $CLUSTER_NAME --services $FRONTEND_SERVICE
+          echo "Frontend stable."
+          echo "Waiting for backend service stabilization..."
+          aws ecs wait services-stable --cluster $CLUSTER_NAME --services $BACKEND_SERVICE
+          echo "Backend stable."
+
+      - name: Final cleanup (log groups + verify)
         if: always()
         run: |
-          echo "Performing cleanup operations..."
-          echo "Ensuring log groups exist..."
           aws logs create-log-group --log-group-name "/ecs/transinia-dev-backend" --region ${{ env.AWS_REGION }} || true
           aws logs create-log-group --log-group-name "/ecs/transinia-dev-frontend" --region ${{ env.AWS_REGION }} || true
-
-          echo "Checking for failed tasks..."
-          FAILED_TASKS=$(aws ecs list-tasks \
-            --cluster ${{ env.CLUSTER_NAME }} \
-            --desired-status STOPPED \
-            --query 'taskArns[*]' \
-            --output text || echo "")
-
-          if [[ ! -z "$FAILED_TASKS" ]]; then
-            echo "Cleaning up failed tasks..."
-            for TASK in $FAILED_TASKS; do
-              aws ecs stop-task --cluster ${{ env.CLUSTER_NAME }} --task $TASK --region ${{ env.AWS_REGION }} || true
-            done
-          fi
-
-          echo "Cleanup completed successfully."
+          echo "Deployment complete"
