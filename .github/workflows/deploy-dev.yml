@@ -31,7 +31,6 @@ env:
   S3_BUCKET_PROCESSED: ${{ secrets.DEV_S3_BUCKET_PROCESSED }}
   DYNAMODB_TABLE_MEETINGS: ${{ secrets.DEV_DYNAMODB_TABLE_MEETINGS }}
   DYNAMODB_TABLE_ACTIONS: ${{ secrets.DEV_DYNAMODB_TABLE_ACTIONS }}
-  TG_ARN: arn:aws:elasticloadbalancing:us-east-1:767397999169:targetgroup/transinia-dev-backend-tg/ec2e3912cc768514
 
 jobs:
   deploy-infrastructure:
@@ -105,26 +104,10 @@ jobs:
           cluster: ${{ env.CLUSTER_NAME }}
           wait-for-service-stability: true
 
-      - name: Resolve BACKEND_API_URL from Target Group
+      - name: Set BACKEND_API_URL from ALB
         run: |
-          set -euo pipefail
-          LB_ARN=$(aws elbv2 describe-target-groups \
-            --target-group-arns "${TG_ARN}" \
-            --query 'TargetGroups[0].LoadBalancerArns[0]' \
-            --output text)
-          DNS=$(aws elbv2 describe-load-balancers \
-            --load-balancer-arns "$LB_ARN" \
-            --query 'LoadBalancers[0].DNSName' \
-            --output text)
-          HAS_443=$(aws elbv2 describe-listeners \
-            --load-balancer-arn "$LB_ARN" \
-            --query 'Listeners[?Port==`443`] | length(@)' \
-            --output text)
-          SCHEME="http"
-          [ "$HAS_443" != "0" ] && SCHEME="https"
-          URL="${SCHEME}://${DNS}"
-          echo "Resolved BACKEND_API_URL=${URL}"
-          echo "BACKEND_API_URL=${URL}" >> "$GITHUB_ENV"
+          echo "BACKEND_API_URL=http://${{ env.ALB_DNS_NAME }}" >> "$GITHUB_ENV"
+          echo "Using BACKEND_API_URL=http://${{ env.ALB_DNS_NAME }}"
 
       - name: Build and push frontend image
         id: build-frontend
