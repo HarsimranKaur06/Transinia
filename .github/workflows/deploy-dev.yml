@@ -119,7 +119,7 @@ jobs:
           tags: ${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:latest,${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:${{ github.sha }}
           build-args: |
             NEXT_PUBLIC_BACKEND_URL=http://${{ env.ALB_DNS_NAME }}
-            NEXT_PUBLIC_API_URL=http://${{ env.ALB_DNS_NAME }}/api
+            NEXT_PUBLIC_API_URL=http://${{ env.ALB_DNS_NAME }}
             NEXT_PUBLIC_ENVIRONMENT=${{ env.ENVIRONMENT }}
 
       - name: Prepare frontend task definition
