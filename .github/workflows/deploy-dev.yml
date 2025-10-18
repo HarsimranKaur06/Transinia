@@ -15,8 +15,8 @@ env:
   ENVIRONMENT: dev
   APP_NAME: transinia
   
-  # ALB DNS Name (update this after infrastructure deployment)
-  ALB_DNS_NAME: transinia-dev-alb-1060895857.us-east-1.elb.amazonaws.com
+  # ALB DNS Name from GitHub Secrets
+  ALB_DNS_NAME: ${{ secrets.DEV_ALB_DNS_NAME }}
   
   # Infrastructure Names
   NAME_PREFIX: transinia-dev
