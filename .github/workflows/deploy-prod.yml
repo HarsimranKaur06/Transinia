@@ -110,6 +110,7 @@ jobs:
           sed -i 's#\${S3_BUCKET_RAW}#${{ env.S3_BUCKET_RAW }}#g' .github/ecs/taskdef-backend-prod.json
           sed -i 's#\${S3_BUCKET_PROCESSED}#${{ env.S3_BUCKET_PROCESSED }}#g' .github/ecs/taskdef-backend-prod.json
           sed -i 's#\${ENVIRONMENT}#${{ env.ENVIRONMENT }}#g' .github/ecs/taskdef-backend-prod.json
+          sed -i 's#\${SENTRY_DSN}#${{ secrets.SENTRY_DSN }}#g' .github/ecs/taskdef-backend-prod.json
 
       - name: Render backend task definition
         id: render-backend

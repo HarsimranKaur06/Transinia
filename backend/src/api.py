@@ -14,12 +14,62 @@ from datetime import datetime
 from fastapi import FastAPI, UploadFile, File, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+import sentry_sdk
+from sentry_sdk.integrations.fastapi import FastApiIntegration
 
 from backend.src.agents.graph import create_graph
 from backend.src.config.settings import settings, logger
 from backend.src.models.schemas import MeetingState
 from backend.src.repositories.storage_repo import StorageRepository
 
+# Scrub sensitive data before sending to Sentry
+def scrub_sensitive_data(event, hint):
+    """Remove sensitive information from Sentry events"""
+    if event.get('request'):
+        # Remove sensitive headers
+        headers = event['request'].get('headers', {})
+        sensitive_headers = ['authorization', 'x-api-key', 'cookie']
+        for header in sensitive_headers:
+            if header in headers:
+                headers[header] = '[Filtered]'
+    
+    # Remove sensitive environment variables
+    if event.get('contexts', {}).get('runtime', {}).get('env'):
+        env = event['contexts']['runtime']['env']
+        sensitive_keys = ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'OPENAI_API_KEY', 'SENTRY_DSN']
+        for key in sensitive_keys:
+            if key in env:
+                env[key] = '[Filtered]'
+    
+    # Scrub sensitive data from exception messages
+    if event.get('exception', {}).get('values'):
+        for exception in event['exception']['values']:
+            if exception.get('value'):
+                value = exception['value']
+                # Replace common patterns for keys
+                import re
+                value = re.sub(r'(sk-[a-zA-Z0-9]{48})', '[OPENAI_KEY]', value)
+                value = re.sub(r'(AKIA[A-Z0-9]{16})', '[AWS_KEY]', value)
+                value = re.sub(r'([a-zA-Z0-9+/]{40})', '[SECRET]', value)
+                exception['value'] = value
+    
+    return event
+
+# Initialize Sentry
+sentry_dsn = os.getenv("SENTRY_DSN")
+if sentry_dsn:
+    sentry_sdk.init(
+        dsn=sentry_dsn,
+        integrations=[FastApiIntegration()],
+        traces_sample_rate=0.1,  # 10% of transactions for performance monitoring
+        environment=os.getenv("ENVIRONMENT", "development"),
+        release=os.getenv("APP_VERSION", "1.0.0"),
+        before_send=scrub_sensitive_data,  # Filter sensitive data
+        send_default_pii=False,  # Don't send personally identifiable information
+    )
+    logger.info("Sentry initialized with sensitive data filtering")
+else:
+    logger.warning("SENTRY_DSN not set - Sentry error tracking disabled")
 
 # Create FastAPI app
 app = FastAPI(title="Transinia API", 

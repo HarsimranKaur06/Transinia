@@ -23,6 +23,7 @@
         { "name": "OPENAI_API_KEY", "value": "${OPENAI_API_KEY}" },
         { "name": "S3_BUCKET_RAW", "value": "${S3_BUCKET_RAW}" },
         { "name": "S3_BUCKET_PROCESSED", "value": "${S3_BUCKET_PROCESSED}" },
+        { "name": "SENTRY_DSN", "value": "${SENTRY_DSN}" },
         { "name": "LOG_LEVEL", "value": "INFO" }
       ],
       "logConfiguration": {
