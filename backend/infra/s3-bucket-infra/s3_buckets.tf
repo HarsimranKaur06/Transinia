@@ -66,7 +66,13 @@ resource "aws_s3_bucket_cors_configuration" "raw_bucket_cors" {
   cors_rule {
     allowed_headers = ["*"]
     allowed_methods = ["GET", "PUT", "POST", "DELETE", "HEAD"]
-    allowed_origins = var.allowed_origins
+    allowed_origins = concat(
+      var.allowed_origins,
+      var.alb_dns_name != "" ? [
+        "http://${var.alb_dns_name}",
+        "https://${var.alb_dns_name}"
+      ] : []
+    )
     expose_headers  = [
       "ETag",
       "x-amz-server-side-encryption",
@@ -136,7 +142,13 @@ resource "aws_s3_bucket_cors_configuration" "processed_bucket_cors" {
   cors_rule {
     allowed_headers = ["*"]
     allowed_methods = ["GET", "PUT", "POST", "DELETE", "HEAD"]
-    allowed_origins = var.allowed_origins
+    allowed_origins = concat(
+      var.allowed_origins,
+      var.alb_dns_name != "" ? [
+        "http://${var.alb_dns_name}",
+        "https://${var.alb_dns_name}"
+      ] : []
+    )
     expose_headers  = [
       "ETag",
       "x-amz-server-side-encryption",

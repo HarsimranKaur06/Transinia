@@ -34,17 +34,19 @@ variable "s3_bucket_processed" {
   type        = string
 }
 
+variable "alb_dns_name" {
+  description = "ALB DNS name for CORS configuration (optional - can be updated via GitHub Actions)"
+  type        = string
+  default     = ""
+}
+
 # Note: Common tags are defined in main.tf
 
 variable "allowed_origins" {
   description = "List of allowed origins for CORS"
   type        = list(string)
   default     = [
-    "http://localhost:3000",                                    # Local development frontend
-    "http://localhost:5000",                                    # Local development backend
-    "http://transinia-dev-alb.*.amazonaws.com",                # Dev ALB domain
-    "https://transinia-dev-alb.*.amazonaws.com",               # Dev ALB domain (HTTPS)
-    "http://transinia-prod-alb.*.amazonaws.com",               # Prod ALB domain
-    "https://transinia-prod-alb.*.amazonaws.com"               # Prod ALB domain (HTTPS)
+    "http://localhost:3000",
+    "http://localhost:5000"
   ]
 }

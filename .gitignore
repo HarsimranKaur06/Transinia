@@ -87,6 +87,9 @@ tf.plan
 **/terraform-provider-*
 .terraform.lock.hcl
 
+# Temporary config files
+cors-config.json
+
 # frontend-files
 # Frontend specific ignores
 frontend/node_modules
