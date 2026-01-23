@@ -17,11 +17,11 @@ This document lists all the GitHub Secrets that need to be configured for the CI
 
 | Secret Name | Description | Example Value |
 |------------|-------------|---------------|
-| `AWS_ACCOUNT_ID` | Your AWS Account ID | `767397999169` |
+| `AWS_ACCOUNT_ID` | Your AWS Account ID | `123456789012` |
 | `AWS_REGION` | AWS Region for deployment | `us-east-1` |
-| `AWS_ACCESS_KEY_ID` | AWS IAM Access Key ID | `AKIA3FLD4GJAUXREE776` |
-| `AWS_SECRET_ACCESS_KEY` | AWS IAM Secret Access Key | `n0ThjLAptLbTKEgjjjizQ1P8BF4duI...` |
-| `OPENAI_API_KEY` | OpenAI API Key for backend | `sk-proj-aRVmBQVJHLnZX0ZjF1b...` |
+| `AWS_ACCESS_KEY_ID` | AWS IAM Access Key ID | `AKIAIOSFODNN7EXAMPLE` |
+| `AWS_SECRET_ACCESS_KEY` | AWS IAM Secret Access Key | `wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY` |
+| `OPENAI_API_KEY` | OpenAI API Key for backend | `sk-proj-XXXXXXXXXXXXXXXXXXXXXXXX` |
 
 ---
 

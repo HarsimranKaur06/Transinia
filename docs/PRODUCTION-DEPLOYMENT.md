@@ -2,15 +2,22 @@
 
 This guide outlines the steps to deploy the Transinia application to the production environment.
 
+## Overview
+
+**Deployment Model:**
+- Infrastructure: Manually deployed using Terraform
+- Application: Automatically deployed via GitHub Actions
+
 ## Prerequisites
 
 1. GitHub repository with both `dev` and `main` branches
-2. AWS account with appropriate permissions
-3. GitHub repository secrets configured (see below)
+2. AWS account with appropriate IAM permissions
+3. Terraform installed locally
+4. GitHub repository secrets configured (see below)
 
 ## Required GitHub Secrets for Production
 
-Before deploying to production, ensure these secrets are set in your GitHub repository:
+Before deploying to production, ensure these secrets are set in your GitHub repository (Settings → Secrets and variables → Actions):
 
 ### Common Secrets (Used in both Dev and Prod)
 - `AWS_ACCESS_KEY_ID`: Your AWS access key ID
@@ -20,22 +27,24 @@ Before deploying to production, ensure these secrets are set in your GitHub repo
 - `OPENAI_API_KEY`: Your OpenAI API key
 
 ### Development-Specific Secrets
-- `DEV_DYNAMODB_TABLE_MEETINGS_BASE`: Base name for dev meetings table (e.g., "meetings")
-- `DEV_DYNAMODB_TABLE_ACTIONS_BASE`: Base name for dev actions table (e.g., "actions")
-- `DEV_S3_BUCKET_RAW_BASE`: Base name for dev raw data bucket (e.g., "transcripts")
-- `DEV_S3_BUCKET_PROCESSED_BASE`: Base name for dev processed data bucket (e.g., "outputs")
+- `DEV_ALB_DNS_NAME`: Dev ALB DNS from Terraform output
+- `DEV_S3_BUCKET_RAW`: Dev raw transcripts bucket name (e.g., `transinia-dev-transcripts`)
+- `DEV_S3_BUCKET_PROCESSED`: Dev processed outputs bucket name (e.g., `transinia-dev-outputs`)
+- `DEV_DYNAMODB_TABLE_MEETINGS`: Dev meetings table name (e.g., `transinia-dev-meetings`)
+- `DEV_DYNAMODB_TABLE_ACTIONS`: Dev actions table name (e.g., `transinia-dev-actions`)
 
 ### Production-Specific Secrets
-- `PROD_DYNAMODB_TABLE_MEETINGS_BASE`: Base name for prod meetings table (e.g., "meetings")
-- `PROD_DYNAMODB_TABLE_ACTIONS_BASE`: Base name for prod actions table (e.g., "actions")
-- `PROD_S3_BUCKET_RAW_BASE`: Base name for prod raw data bucket (e.g., "transcripts")
-- `PROD_S3_BUCKET_PROCESSED_BASE`: Base name for prod processed data bucket (e.g., "outputs")
+- `PROD_ALB_DNS_NAME`: Prod ALB DNS from Terraform output
+- `PROD_S3_BUCKET_RAW`: Prod raw transcripts bucket name (e.g., `transinia-prod-transcripts`)
+- `PROD_S3_BUCKET_PROCESSED`: Prod processed outputs bucket name (e.g., `transinia-prod-outputs`)
+- `PROD_DYNAMODB_TABLE_MEETINGS`: Prod meetings table name (e.g., `transinia-prod-meetings`)
+- `PROD_DYNAMODB_TABLE_ACTIONS`: Prod actions table name (e.g., `transinia-prod-actions`)
 
 ## Deployment Steps
 
-### 1. Initial Production Infrastructure Setup
+### 1. Initial Production Infrastructure Setup (Manual)
 
-To deploy the infrastructure for production for the first time:
+Deploy the infrastructure for production using Terraform:
 
 ```bash
 # Clone the repository if you haven't already
@@ -45,26 +54,47 @@ cd Transinia
 # Checkout the main branch
 git checkout main
 
-# Deploy S3 infrastructure manually
+# Deploy S3 infrastructure
 cd backend/infra/s3-bucket-infra
 terraform init
-terraform plan -out=s3_tf.plan -var="environment=prod" \
-  -var="s3_bucket_raw=${PROD_S3_BUCKET_RAW_BASE}" \
-  -var="s3_bucket_processed=${PROD_S3_BUCKET_PROCESSED_BASE}"
-terraform apply -auto-approve s3_tf.plan
+terraform plan -var-file="prod.tfvars"
+terraform apply -var-file="prod.tfvars"
 
-# Deploy DynamoDB infrastructure manually
+# Get S3 bucket names
+terraform output raw_bucket_name
+terraform output processed_bucket_name
+
+# Deploy DynamoDB infrastructure
 cd ../dynamodb-infra
 terraform init
-terraform plan -out=dynamodb_tf.plan -var="environment=prod" \
-  -var="dynamodb_table_meetings=${PROD_DYNAMODB_TABLE_MEETINGS_BASE}" \
-  -var="dynamodb_table_actions=${PROD_DYNAMODB_TABLE_ACTIONS_BASE}"
-terraform apply -auto-approve dynamodb_tf.plan
+terraform plan -var-file="prod.tfvars"
+terraform apply -var-file="prod.tfvars"
+
+# Get DynamoDB table names
+terraform output meetings_table_name
+terraform output actions_table_name
+
+# Deploy ECS Fargate infrastructure
+cd ../ecs-fargate-infra
+terraform init
+terraform plan -var-file="prod.tfvars"
+terraform apply -var-file="prod.tfvars"
+
+# Get ALB DNS name
+terraform output alb_dns_name
 ```
 
-### 2. Ongoing Deployments via GitHub Actions
+### 2. Configure GitHub Secrets
 
-Once the initial setup is complete, future deployments to production will happen automatically when changes are merged to the `main` branch:
+Add the Terraform output values to GitHub Secrets:
+- Go to repository Settings → Secrets and variables → Actions
+- Add `PROD_ALB_DNS_NAME`, `PROD_S3_BUCKET_RAW`, `PROD_S3_BUCKET_PROCESSED`, `PROD_DYNAMODB_TABLE_MEETINGS`, `PROD_DYNAMODB_TABLE_ACTIONS`
+
+### 3. Deploy Application via GitHub Actions
+
+Once infrastructure is set up and secrets are configured, the application will deploy automatically:
+
+**Option 1: Automatic Deployment**
 
 1. Test your changes in the development environment first:
    ```bash
@@ -79,18 +109,18 @@ Once the initial setup is complete, future deployments to production will happen
 
 3. Review the changes and ensure all tests pass
 
-4. Merge the pull request to deploy to production
+4. Merge the pull request - this triggers automatic application deployment to production
 
 5. Monitor the GitHub Actions workflow in the "Actions" tab of your repository
 
-### 3. Manual Production Deployment (if needed)
+**Option 2: Manual Deployment**
 
-You can also trigger the production deployment workflow manually:
+You can trigger the production deployment workflow manually:
 
 1. Go to the "Actions" tab in your GitHub repository
-2. Select "CI/CD — build, push to ECR, deploy to ECS (production)"
+2. Select "Deploy Infrastructure (prod)"
 3. Click "Run workflow"
-4. Enter a reason for the deployment and click "Run workflow"
+4. Click "Run workflow" to confirm
 
 ## Verifying the Deployment
 
@@ -107,16 +137,21 @@ aws dynamodb list-tables | grep transinia-prod
 aws ecs describe-services --cluster transinia-prod-cluster --services transinia-prod-backend-service transinia-prod-frontend-service
 ```
 
-## Destroying Infrastructure When Not Needed
+## Destroying Production Infrastructure
 
-To destroy the production infrastructure:
+⚠️ **Warning**: This will permanently delete all production resources and data!
+
+Destroy infrastructure in reverse order:
 
 ```bash
-# Run the provided script
-cd Transinia
-./scripts/Destroy-ProdInfra.ps1  # For Windows
-# OR
-bash ./scripts/destroy-prod-infra.sh  # For Linux/Mac
+cd backend/infra/ecs-fargate-infra
+terraform destroy -var-file="prod.tfvars"
+
+cd ../dynamodb-infra
+terraform destroy -var-file="prod.tfvars"
+
+cd ../s3-bucket-infra
+terraform destroy -var-file="prod.tfvars"
 ```
 
 ## Troubleshooting

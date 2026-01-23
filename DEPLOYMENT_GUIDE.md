@@ -8,43 +8,64 @@ This guide explains how to deploy the Transinia application to AWS ECS Fargate.
 - Terraform installed locally
 - GitHub repository with secrets configured
 
-## Infrastructure Setup (One-time)
+## Infrastructure Setup (Manual - One-time)
 
-### 1. Deploy S3 Buckets and DynamoDB Tables
+### 1. Deploy S3 Buckets
 ```bash
 cd backend/infra/s3-bucket-infra
 terraform init
-terraform plan
-terraform apply
-
-cd ../dynamodb-infra
-terraform init
-terraform plan
+terraform plan -var-file="terraform.tfvars"  # For dev
+# or terraform plan -var-file="prod.tfvars"  # For prod
 terraform apply
 ```
 
-### 2. Deploy ECS Fargate Infrastructure
+### 2. Deploy DynamoDB Tables
+```bash
+cd ../dynamodb-infra
+terraform init
+terraform plan -var-file="terraform.tfvars"  # For dev
+terraform apply
+```
+
+### 3. Deploy ECS Fargate Infrastructure
 ```bash
 cd ../ecs-fargate-infra
 terraform init
-terraform plan
+terraform plan -var-file="terraform.tfvars"  # For dev
 terraform apply
 ```
 
-### 3. Get ALB DNS Name
-After Terraform completes, get the ALB DNS name:
+### 4. Get Infrastructure Output Values
+After Terraform completes, get the required values:
 ```bash
+# Get ALB DNS Name
 terraform output alb_dns_name
+
+# Get S3 bucket names (from s3-bucket-infra directory)
+terraform output raw_bucket_name
+terraform output processed_bucket_name
+
+# Get DynamoDB table names (from dynamodb-infra directory)
+terraform output meetings_table_name
+terraform output actions_table_name
 ```
 
-Example output: `transinia-dev-alb-1060895857.us-east-1.elb.amazonaws.com`
+### 5. Configure GitHub Secrets
+Add these values to your GitHub repository secrets (Settings → Secrets and variables → Actions):
 
-### 4. Update GitHub Workflow
-Update the `ALB_DNS_NAME` in `.github/workflows/deploy-dev.yml`:
-```yaml
-env:
-  ALB_DNS_NAME: transinia-dev-alb-XXXXXXXXXX.us-east-1.elb.amazonaws.com
-```
+**For Dev Environment:**
+- `DEV_ALB_DNS_NAME` - From ECS Terraform output
+- `DEV_S3_BUCKET_RAW` - From S3 Terraform output (e.g., `transinia-dev-transcripts`)
+- `DEV_S3_BUCKET_PROCESSED` - From S3 Terraform output (e.g., `transinia-dev-outputs`)
+- `DEV_DYNAMODB_TABLE_MEETINGS` - From DynamoDB Terraform output (e.g., `transinia-dev-meetings`)
+- `DEV_DYNAMODB_TABLE_ACTIONS` - From DynamoDB Terraform output (e.g., `transinia-dev-actions`)
+
+**For Prod Environment:**
+- `PROD_ALB_DNS_NAME`
+- `PROD_S3_BUCKET_RAW`
+- `PROD_S3_BUCKET_PROCESSED`
+- `PROD_DYNAMODB_TABLE_MEETINGS`
+- `PROD_DYNAMODB_TABLE_ACTIONS`
 
 ## Application Deployment
 
