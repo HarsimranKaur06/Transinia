@@ -1,0 +1,58 @@
+{
+  "family": "transinia-backend-task-prod",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "${ECS_EXECUTION_ROLE_ARN}",
+  "taskRoleArn": "${ECS_TASK_ROLE_ARN}",
+  "containerDefinitions": [
+    {
+      "name": "meeting-bot",
+      "image": "REPLACE_WITH_IMAGE",
+      "essential": true,
+      "portMappings": [
+        { "containerPort": 8001, "protocol": "tcp" }
+      ],
+      "environment": [
+        { "name": "AWS_REGION", "value": "${AWS_REGION}" },
+        { "name": "ENVIRONMENT", "value": "${ENVIRONMENT}" },
+        { "name": "S3_BUCKET_RAW", "value": "${S3_BUCKET_RAW}" },
+        { "name": "S3_BUCKET_PROCESSED", "value": "${S3_BUCKET_PROCESSED}" },
+        { "name": "DYNAMODB_TABLE_MEETINGS", "value": "${DYNAMODB_TABLE_MEETINGS}" },
+        { "name": "DYNAMODB_TABLE_ACTIONS", "value": "${DYNAMODB_TABLE_ACTIONS}" },
+        { "name": "LOG_LEVEL", "value": "INFO" },
+        { "name": "USE_DYNAMODB", "value": "true" }
+      ],
+      "secrets": [
+        {
+          "name": "AWS_ACCESS_KEY_ID",
+          "valueFrom": "${AWS_ACCESS_KEY_ID}"
+        },
+        {
+          "name": "AWS_SECRET_ACCESS_KEY",
+          "valueFrom": "${AWS_SECRET_ACCESS_KEY}"
+        },
+        {
+          "name": "OPENAI_API_KEY",
+          "valueFrom": "${OPENAI_API_KEY}"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/transinia-prod-backend",
+          "awslogs-region": "${AWS_REGION}",
+          "awslogs-stream-prefix": "ecs"
+        }
+      },
+      "healthCheck": {
+        "command": ["CMD-SHELL", "curl -f http://localhost:8001/health || exit 1"],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 60
+      }
+    }
+  ]
+}

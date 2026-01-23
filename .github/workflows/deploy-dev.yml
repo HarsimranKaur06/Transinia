@@ -1,0 +1,170 @@
+name: Deploy Infrastructure (dev)
+
+on:
+  push:
+    branches: [ dev ]
+  workflow_dispatch:
+
+env:
+  # AWS Settings
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
+  
+  # Environment
+  ENVIRONMENT: dev
+  APP_NAME: transinia
+  
+  # ALB DNS Name from GitHub Secrets
+  ALB_DNS_NAME: ${{ secrets.DEV_ALB_DNS_NAME }}
+  
+  # Infrastructure Names
+  NAME_PREFIX: transinia-dev
+  BACKEND_ECR_REPO: transinia-dev-backend
+  FRONTEND_ECR_REPO: transinia-dev-frontend
+  CLUSTER_NAME: transinia-dev-cluster
+  BACKEND_SERVICE: transinia-dev-backend-service
+  FRONTEND_SERVICE: transinia-dev-frontend-service
+  
+  # Resource Names
+  S3_BUCKET_RAW: ${{ secrets.DEV_S3_BUCKET_RAW }}
+  S3_BUCKET_PROCESSED: ${{ secrets.DEV_S3_BUCKET_PROCESSED }}
+  DYNAMODB_TABLE_MEETINGS: ${{ secrets.DEV_DYNAMODB_TABLE_MEETINGS }}
+  DYNAMODB_TABLE_ACTIONS: ${{ secrets.DEV_DYNAMODB_TABLE_ACTIONS }}
+
+jobs:
+  deploy-infrastructure:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Ensure ECR repositories exist
+        run: |
+          aws ecr describe-repositories --repository-names $BACKEND_ECR_REPO >/dev/null 2>&1 || aws ecr create-repository --repository-name $BACKEND_ECR_REPO
+          aws ecr describe-repositories --repository-names $FRONTEND_ECR_REPO >/dev/null 2>&1 || aws ecr create-repository --repository-name $FRONTEND_ECR_REPO
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v1
+        with:
+          mask-password: 'true'
+
+      - name: Build and push backend image
+        id: build-backend
+        uses: docker/build-push-action@v4
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: true
+          tags: ${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:latest,${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:${{ github.sha }}
+
+      - name: Create CloudWatch Log Groups
+        run: |
+          aws logs create-log-group --log-group-name "/ecs/transinia-dev-backend" --region ${{ env.AWS_REGION }} || true
+          aws logs create-log-group --log-group-name "/ecs/transinia-dev-frontend" --region ${{ env.AWS_REGION }} || true
+
+      - name: Prepare backend task definition
+        run: |
+          sed -i 's#\${AWS_REGION}#${{ env.AWS_REGION }}#g' .github/ecs/taskdef-backend.json
+          sed -i 's#\${ECS_EXECUTION_ROLE_ARN}#arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/transinia-dev-ecsTaskExecutionRole#g' .github/ecs/taskdef-backend.json
+          sed -i 's#\${ECS_TASK_ROLE_ARN}#arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/transinia-dev-ecsTaskRole#g' .github/ecs/taskdef-backend.json
+          sed -i 's#\${DYNAMODB_TABLE_MEETINGS}#${{ env.DYNAMODB_TABLE_MEETINGS }}#g' .github/ecs/taskdef-backend.json
+          sed -i 's#\${DYNAMODB_TABLE_ACTIONS}#${{ env.DYNAMODB_TABLE_ACTIONS }}#g' .github/ecs/taskdef-backend.json
+          sed -i 's#\${AWS_ACCESS_KEY_ID}#${{ secrets.AWS_ACCESS_KEY_ID }}#g' .github/ecs/taskdef-backend.json
+          sed -i 's#\${AWS_SECRET_ACCESS_KEY}#${{ secrets.AWS_SECRET_ACCESS_KEY }}#g' .github/ecs/taskdef-backend.json
+          sed -i 's#\${OPENAI_API_KEY}#${{ secrets.OPENAI_API_KEY }}#g' .github/ecs/taskdef-backend.json
+          sed -i 's#\${S3_BUCKET_RAW}#${{ env.S3_BUCKET_RAW }}#g' .github/ecs/taskdef-backend.json
+          sed -i 's#\${S3_BUCKET_PROCESSED}#${{ env.S3_BUCKET_PROCESSED }}#g' .github/ecs/taskdef-backend.json
+          sed -i 's#\${ENVIRONMENT}#${{ env.ENVIRONMENT }}#g' .github/ecs/taskdef-backend.json
+
+      - name: Render backend task definition
+        id: render-backend
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: .github/ecs/taskdef-backend.json
+          container-name: meeting-bot
+          image: ${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:latest
+
+      - name: Deploy backend service
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.render-backend.outputs.task-definition }}
+          service: ${{ env.BACKEND_SERVICE }}
+          cluster: ${{ env.CLUSTER_NAME }}
+          wait-for-service-stability: true
+
+      - name: Set BACKEND_API_URL from ALB
+        run: |
+          echo "BACKEND_API_URL=http://${{ env.ALB_DNS_NAME }}" >> "$GITHUB_ENV"
+          echo "Using BACKEND_API_URL=http://${{ env.ALB_DNS_NAME }}"
+
+      - name: Build and push frontend image
+        id: build-frontend
+        uses: docker/build-push-action@v4
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: true
+          tags: ${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:latest,${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:${{ github.sha }}
+          build-args: |
+            NEXT_PUBLIC_BACKEND_URL=http://${{ env.ALB_DNS_NAME }}
+            NEXT_PUBLIC_API_URL=http://${{ env.ALB_DNS_NAME }}
+            NEXT_PUBLIC_ENVIRONMENT=${{ env.ENVIRONMENT }}
+
+      - name: Prepare frontend task definition
+        run: |
+          sed -i 's#\${AWS_REGION}#${{ env.AWS_REGION }}#g' .github/ecs/taskdef-frontend.json
+          sed -i 's#\${ECS_EXECUTION_ROLE_ARN}#arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/transinia-dev-ecsTaskExecutionRole#g' .github/ecs/taskdef-frontend.json
+          sed -i 's#\${ECS_TASK_ROLE_ARN}#arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/transinia-dev-ecsTaskRole#g' .github/ecs/taskdef-frontend.json
+          sed -i 's#\${BACKEND_API_URL}#${{ env.BACKEND_API_URL }}#g' .github/ecs/taskdef-frontend.json
+
+      - name: Render frontend task definition
+        id: render-frontend
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: .github/ecs/taskdef-frontend.json
+          container-name: frontend
+          image: ${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:latest
+        env:
+          ALB_DNS_NAME: ${{ env.ALB_DNS_NAME }}
+
+      - name: Deploy frontend service
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.render-frontend.outputs.task-definition }}
+          service: ${{ env.FRONTEND_SERVICE }}
+          cluster: ${{ env.CLUSTER_NAME }}
+          wait-for-service-stability: true
+
+      - name: Force service update for new tasks
+        run: |
+          echo "Forcing ECS service update to pick up latest tasks..."
+          aws ecs update-service --cluster $CLUSTER_NAME --service $BACKEND_SERVICE --force-new-deployment
+          aws ecs update-service --cluster $CLUSTER_NAME --service $FRONTEND_SERVICE --force-new-deployment
+
+      - name: Wait for services to stabilize
+        run: |
+          echo "Waiting for frontend service stabilization..."
+          aws ecs wait services-stable --cluster $CLUSTER_NAME --services $FRONTEND_SERVICE
+          echo "Frontend stable."
+          echo "Waiting for backend service stabilization..."
+          aws ecs wait services-stable --cluster $CLUSTER_NAME --services $BACKEND_SERVICE
+          echo "Backend stable."
+
+      - name: Final cleanup (log groups + verify)
+        if: always()
+        run: |
+          aws logs create-log-group --log-group-name "/ecs/transinia-dev-backend" --region ${{ env.AWS_REGION }} || true
+          aws logs create-log-group --log-group-name "/ecs/transinia-dev-frontend" --region ${{ env.AWS_REGION }} || true
+          echo "Deployment complete"

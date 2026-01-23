@@ -1,12 +1,37 @@
-version: '3'
+version: "3.9"
 
 services:
   meeting-bot:
-    build: .
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
     container_name: meeting-bot
-    volumes:
-      - ./outputs:/app/outputs
+    ports:
+      - "8001:8001"                  # FastAPI on host 8001
     env_file:
-      - .env
-    # Default command runs in local mode
-    # Override with: docker-compose run meeting-bot --source s3 --s3-key transcript.txt
+      - ./backend/.env               # local dev env only
+    volumes:
+      - ./backend/transcripts:/app/transcripts
+      - ./backend/outputs:/app/outputs
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8001/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Docker default network DNS lets "meeting-bot" resolve to the backend container
+        NEXT_PUBLIC_BACKEND_URL: "http://meeting-bot:8001"
+    ports:
+      - "3000:3000"
+    depends_on:
+      meeting-bot:
+        condition: service_healthy
+    environment:
+      # optional: useful during local dev
+      PORT: "3000"
