@@ -55,6 +55,29 @@ jobs:
           aws ecr describe-repositories --repository-names $BACKEND_ECR_REPO >/dev/null 2>&1 || aws ecr create-repository --repository-name $BACKEND_ECR_REPO
           aws ecr describe-repositories --repository-names $FRONTEND_ECR_REPO >/dev/null 2>&1 || aws ecr create-repository --repository-name $FRONTEND_ECR_REPO
 
+      - name: Configure S3 CORS for ALB access
+        run: |
+          cat > cors-config.json <<EOF
+          {
+            "CORSRules": [
+              {
+                "AllowedHeaders": ["*"],
+                "AllowedMethods": ["GET", "PUT", "POST", "DELETE", "HEAD"],
+                "AllowedOrigins": [
+                  "http://localhost:3000",
+                  "http://localhost:5000",
+                  "http://${{ env.ALB_DNS_NAME }}",
+                  "https://${{ env.ALB_DNS_NAME }}"
+                ],
+                "ExposeHeaders": ["ETag", "x-amz-server-side-encryption", "x-amz-request-id", "x-amz-id-2", "Content-Type", "Content-Length"],
+                "MaxAgeSeconds": 3000
+              }
+            ]
+          }
+          EOF
+          aws s3api put-bucket-cors --bucket ${{ env.S3_BUCKET_RAW }} --cors-configuration file://cors-config.json
+          aws s3api put-bucket-cors --bucket ${{ env.S3_BUCKET_PROCESSED }} --cors-configuration file://cors-config.json
+
       - name: Login to ECR
         uses: aws-actions/amazon-ecr-login@v1
         with:
