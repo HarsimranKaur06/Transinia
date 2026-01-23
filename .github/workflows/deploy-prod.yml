@@ -31,6 +31,9 @@ env:
   S3_BUCKET_PROCESSED: ${{ secrets.PROD_S3_BUCKET_PROCESSED }}
   DYNAMODB_TABLE_MEETINGS: ${{ secrets.PROD_DYNAMODB_TABLE_MEETINGS }}
   DYNAMODB_TABLE_ACTIONS: ${{ secrets.PROD_DYNAMODB_TABLE_ACTIONS }}
+  
+  # Monitoring
+  SENTRY_DSN: ${{ secrets.PROD_SENTRY_DSN }}
 
 jobs:
   deploy-infrastructure:
@@ -110,7 +113,7 @@ jobs:
           sed -i 's#\${S3_BUCKET_RAW}#${{ env.S3_BUCKET_RAW }}#g' .github/ecs/taskdef-backend-prod.json
           sed -i 's#\${S3_BUCKET_PROCESSED}#${{ env.S3_BUCKET_PROCESSED }}#g' .github/ecs/taskdef-backend-prod.json
           sed -i 's#\${ENVIRONMENT}#${{ env.ENVIRONMENT }}#g' .github/ecs/taskdef-backend-prod.json
-          sed -i 's#\${SENTRY_DSN}#${{ secrets.SENTRY_DSN }}#g' .github/ecs/taskdef-backend-prod.json
+          sed -i 's#\${SENTRY_DSN}#${{ env.SENTRY_DSN }}#g' .github/ecs/taskdef-backend-prod.json
 
       - name: Render backend task definition
         id: render-backend
