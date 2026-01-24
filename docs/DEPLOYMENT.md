@@ -69,6 +69,8 @@ Add these production secrets:
 | `PROD_S3_BUCKET_PROCESSED` | S3 processed bucket name | `transinia-prod-outputs` |
 | `PROD_DYNAMODB_TABLE_MEETINGS` | DynamoDB meetings table | `transinia-prod-meetings` |
 | `PROD_DYNAMODB_TABLE_ACTIONS` | DynamoDB actions table | `transinia-prod-actions` |
+| `PROD_SENTRY_DSN` | Sentry DSN for prod monitoring | See Sentry Setup below |
+| `DEV_SENTRY_DSN` | Sentry DSN for dev monitoring | See Sentry Setup below |
 
 **Note:** These secrets use the same AWS credentials as dev:
 - `AWS_ACCOUNT_ID` (already set)
@@ -76,6 +78,53 @@ Add these production secrets:
 - `AWS_ACCESS_KEY_ID` (already set)
 - `AWS_SECRET_ACCESS_KEY` (already set)
 - `OPENAI_API_KEY` (already set)
+
+---
+
+## Phase 2.5: Configure Sentry Monitoring (Optional but Recommended)
+
+### Why Sentry?
+- Real-time error tracking and alerting
+- Performance monitoring (APM)
+- Stack traces with code context
+- Automatic sensitive data filtering (AWS keys, API keys)
+
+### Setup Steps:
+
+1. **Sign up for Sentry** (if not already):
+   - Go to: https://sentry.io/signup/
+   - Free tier: 5,000 errors/month
+
+2. **Create Dev Project:**
+   - Platform: **FastAPI**
+   - Project name: `transinia-dev`
+   - Copy the DSN (format: `https://xxxxx@xxx.ingest.sentry.io/xxxxx`)
+   - Add to GitHub Secrets as `DEV_SENTRY_DSN`
+
+3. **Create Prod Project:**
+   - Platform: **FastAPI**
+   - Project name: `transinia-prod`
+   - Copy the DSN
+   - Add to GitHub Secrets as `PROD_SENTRY_DSN`
+
+4. **Verify Setup:**
+   - After deployment, check logs:
+     ```bash
+     aws logs tail /ecs/transinia-prod-backend --since 5m --region us-east-1 | Select-String "Sentry"
+     ```
+   - Should see: `"Sentry initialized with sensitive data filtering"`
+
+5. **Access Sentry Dashboard:**
+   - Issues: https://sentry.io/issues/
+   - Performance: https://sentry.io/performance/
+   - Dashboards: https://sentry.io/dashboards/
+
+**Security Note:** Sentry integration includes automatic filtering of:
+- AWS Access Keys
+- AWS Secret Keys
+- OpenAI API Keys
+- Authorization headers
+- Environment variables
 
 ---
 
@@ -186,6 +235,16 @@ aws ecs list-services --cluster transinia-prod-cluster
 aws logs tail /ecs/transinia-prod-backend --follow
 aws logs tail /ecs/transinia-prod-frontend --follow
 
-# Force new deployment
-aws ecs update-service --cluster transinia-prod-cluster --service transinia-prod-backend-service --force-new-deployment
+# Check deployment status
+aws ecs describe-services --cluster transinia-prod-cluster --service transinia-prod-backend-service --region us-east-1
+
+# View task definition history
+aws ecs list-task-definitions --family-prefix transinia-prod-backend --region us-east-1
+
+# Rollback to specific revision (if needed)
+aws ecs update-service --cluster transinia-prod-cluster --service transinia-prod-backend-service --task-definition transinia-prod-backend:123 --region us-east-1
+
+# Emergency restart only (not recommended for production deploys)
+# Use GitHub Actions workflow for proper deployments
+aws ecs update-service --cluster transinia-prod-cluster --service transinia-prod-backend-service --force-new-deployment --region us-east-1
 ```

@@ -182,6 +182,25 @@ To use DynamoDB for persistent storage:
 
 The `src/scripts/` directory contains standalone scripts for specific operations, which can be useful for automation or integration with other tools.
 
-````
-# Smart Meeting Minutes (Transinia)
+## Monitoring
+
+### Error Tracking & Performance Monitoring (Sentry)
+The application integrates with Sentry for real-time error tracking and performance monitoring:
+
+- **Error Tracking:** Captures Python exceptions with stack traces
+- **Performance Monitoring:** Tracks API response times and slow queries
+- **Security:** Automatically filters sensitive data (AWS keys, API keys)
+- **Environments:** Separate monitoring for dev and prod
+
+**Setup:**
+1. Configure `DEV_SENTRY_DSN` and `PROD_SENTRY_DSN` in GitHub Secrets
+2. Deploy application (Sentry initializes automatically)
+3. View errors and performance at: https://sentry.io/
+
+### CloudWatch Logs
+Application logs are available in AWS CloudWatch:
+- Dev Backend: `/ecs/transinia-dev-backend`
+- Dev Frontend: `/ecs/transinia-dev-frontend`
+- Prod Backend: `/ecs/transinia-prod-backend`
+- Prod Frontend: `/ecs/transinia-prod-frontend`
 
