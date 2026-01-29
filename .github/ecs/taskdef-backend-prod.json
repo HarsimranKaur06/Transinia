@@ -21,6 +21,7 @@
         { "name": "S3_BUCKET_PROCESSED", "value": "${S3_BUCKET_PROCESSED}" },
         { "name": "DYNAMODB_TABLE_MEETINGS", "value": "${DYNAMODB_TABLE_MEETINGS}" },
         { "name": "DYNAMODB_TABLE_ACTIONS", "value": "${DYNAMODB_TABLE_ACTIONS}" },
+        { "name": "SENTRY_DSN", "value": "${SENTRY_DSN}" },
         { "name": "LOG_LEVEL", "value": "INFO" },
         { "name": "USE_DYNAMODB", "value": "true" }
       ],

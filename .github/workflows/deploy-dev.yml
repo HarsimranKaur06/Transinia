@@ -31,6 +31,9 @@ env:
   S3_BUCKET_PROCESSED: ${{ secrets.DEV_S3_BUCKET_PROCESSED }}
   DYNAMODB_TABLE_MEETINGS: ${{ secrets.DEV_DYNAMODB_TABLE_MEETINGS }}
   DYNAMODB_TABLE_ACTIONS: ${{ secrets.DEV_DYNAMODB_TABLE_ACTIONS }}
+  
+  # Monitoring
+  SENTRY_DSN: ${{ secrets.DEV_SENTRY_DSN }}
 
 jobs:
   deploy-infrastructure:
@@ -54,6 +57,29 @@ jobs:
         run: |
           aws ecr describe-repositories --repository-names $BACKEND_ECR_REPO >/dev/null 2>&1 || aws ecr create-repository --repository-name $BACKEND_ECR_REPO
           aws ecr describe-repositories --repository-names $FRONTEND_ECR_REPO >/dev/null 2>&1 || aws ecr create-repository --repository-name $FRONTEND_ECR_REPO
+
+      - name: Configure S3 CORS for ALB access
+        run: |
+          cat > cors-config.json <<EOF
+          {
+            "CORSRules": [
+              {
+                "AllowedHeaders": ["*"],
+                "AllowedMethods": ["GET", "PUT", "POST", "DELETE", "HEAD"],
+                "AllowedOrigins": [
+                  "http://localhost:3000",
+                  "http://localhost:5000",
+                  "http://${{ env.ALB_DNS_NAME }}",
+                  "https://${{ env.ALB_DNS_NAME }}"
+                ],
+                "ExposeHeaders": ["ETag", "x-amz-server-side-encryption", "x-amz-request-id", "x-amz-id-2", "Content-Type", "Content-Length"],
+                "MaxAgeSeconds": 3000
+              }
+            ]
+          }
+          EOF
+          aws s3api put-bucket-cors --bucket ${{ env.S3_BUCKET_RAW }} --cors-configuration file://cors-config.json
+          aws s3api put-bucket-cors --bucket ${{ env.S3_BUCKET_PROCESSED }} --cors-configuration file://cors-config.json
 
       - name: Login to ECR
         uses: aws-actions/amazon-ecr-login@v1
@@ -87,6 +113,7 @@ jobs:
           sed -i 's#\${S3_BUCKET_RAW}#${{ env.S3_BUCKET_RAW }}#g' .github/ecs/taskdef-backend.json
           sed -i 's#\${S3_BUCKET_PROCESSED}#${{ env.S3_BUCKET_PROCESSED }}#g' .github/ecs/taskdef-backend.json
           sed -i 's#\${ENVIRONMENT}#${{ env.ENVIRONMENT }}#g' .github/ecs/taskdef-backend.json
+          sed -i 's#\${SENTRY_DSN}#${{ env.SENTRY_DSN }}#g' .github/ecs/taskdef-backend.json
 
       - name: Render backend task definition
         id: render-backend
@@ -105,8 +132,10 @@ jobs:
           wait-for-service-stability: true
 
       - name: Set BACKEND_API_URL from ALB
+        id: set-backend-url
         run: |
           echo "BACKEND_API_URL=http://${{ env.ALB_DNS_NAME }}" >> "$GITHUB_ENV"
+          echo "backend_url=http://${{ env.ALB_DNS_NAME }}" >> "$GITHUB_OUTPUT"
           echo "Using BACKEND_API_URL=http://${{ env.ALB_DNS_NAME }}"
 
       - name: Build and push frontend image
@@ -127,7 +156,7 @@ jobs:
           sed -i 's#\${AWS_REGION}#${{ env.AWS_REGION }}#g' .github/ecs/taskdef-frontend.json
           sed -i 's#\${ECS_EXECUTION_ROLE_ARN}#arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/transinia-dev-ecsTaskExecutionRole#g' .github/ecs/taskdef-frontend.json
           sed -i 's#\${ECS_TASK_ROLE_ARN}#arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/transinia-dev-ecsTaskRole#g' .github/ecs/taskdef-frontend.json
-          sed -i 's#\${BACKEND_API_URL}#${{ env.BACKEND_API_URL }}#g' .github/ecs/taskdef-frontend.json
+          sed -i 's#\${BACKEND_API_URL}#${{ steps.set-backend-url.outputs.backend_url }}#g' .github/ecs/taskdef-frontend.json
 
       - name: Render frontend task definition
         id: render-frontend
@@ -136,8 +165,6 @@ jobs:
           task-definition: .github/ecs/taskdef-frontend.json
           container-name: frontend
           image: ${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:latest
-        env:
-          ALB_DNS_NAME: ${{ env.ALB_DNS_NAME }}
 
       - name: Deploy frontend service
         uses: aws-actions/amazon-ecs-deploy-task-definition@v1

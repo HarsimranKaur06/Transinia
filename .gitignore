@@ -38,6 +38,7 @@ MANIFEST
 
 # Virtual Environments
 .env
+backend/.env
 .venv
 env/
 venv/
@@ -53,7 +54,6 @@ venv.bak/
 
 # Project specific
 .DS_Store
-.env.example
 .env
 
 # AWS credentials
