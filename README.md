@@ -19,16 +19,87 @@ This app turns a plain-text meeting transcript into neat **Minutes (Markdown)** 
    # Windows: .venv\Scripts\activate
    # macOS/Linux:
    source .venv/bin/activate
-   pip install -r requirements.txt
-   cp .env.example .env
-   # Open .env and paste your OpenAI key and AWS credentials if using S3
-   python -m src.app
+   pip install -r backend/requirements.txt
+   
+   # Copy and configure environment variables
+   cp backend/.env.example backend/.env
+   # Edit backend/.env and add your API keys and AWS credentials
+   
+   python backend/run_app.py
    ```
-3. Check the `outputs/` folder for:
+3. Check the `backend/outputs/` folder for:
    - `minutes.md`
    - `actions.json`
 
-Edit `samples/transcript.txt` with your own notes and run again.
+## Docker Setup
+
+### Prerequisites
+
+#### 1. Install Docker and Docker Compose
+Make sure Docker Desktop is installed and running.
+
+#### 2. Set Up AWS Infrastructure
+Before running the application, you need to create the required AWS resources. You have two options:
+
+**Option A: Use Terraform (Recommended)**
+```bash
+# Create S3 buckets
+cd backend/infra/s3-bucket-infra
+terraform init
+terraform apply -var-file="dev.tfvars"
+
+# Create DynamoDB tables
+cd ../dynamodb-infra
+terraform init
+terraform apply -var-file="dev.tfvars"
+```
+This will create:
+- S3 buckets: `transinia-dev-transcripts` and `transinia-dev-outputs`
+- DynamoDB tables: `transinia-dev-meetings` and `transinia-dev-actions`
+
+**Option B: Create Manually**
+- Create 2 S3 buckets in your AWS account
+- Create 2 DynamoDB tables with appropriate schemas (see `docs/DYNAMODB.md`)
+
+#### 3. Configure Environment Variables
+```bash
+# Copy the example environment file
+cp backend/.env.example backend/.env
+```
+
+Edit `backend/.env` and add your credentials:
+- `OPENAI_API_KEY` - Your OpenAI API key ([get one here](https://platform.openai.com/api-keys))
+- `AWS_ACCESS_KEY_ID` - Your AWS access key
+- `AWS_SECRET_ACCESS_KEY` - Your AWS secret key
+- `AWS_REGION` - Your AWS region (e.g., `us-east-1`)
+- `S3_BUCKET_RAW` - Your S3 bucket for raw transcripts
+- `S3_BUCKET_PROCESSED` - Your S3 bucket for processed outputs
+- `DYNAMODB_TABLE_MEETINGS` - Your DynamoDB meetings table name
+- `DYNAMODB_TABLE_ACTIONS` - Your DynamoDB actions table name
+
+### Run with Docker Compose
+```bash
+# Start both backend and frontend
+docker-compose up --build
+
+# Access the application:
+# - Frontend: http://localhost:3000
+# - Backend API: http://localhost:8001
+# - Health check: http://localhost:8001/health
+```
+
+### Run Individual Containers
+Backend only:
+```bash
+docker build -t transinia-backend ./backend
+docker run --env-file backend/.env -p 8001:8001 transinia-backend
+```
+
+Frontend only:
+```bash
+docker build -t transinia-frontend ./frontend --build-arg NEXT_PUBLIC_BACKEND_URL=http://localhost:8001
+docker run -p 3000:3000 transinia-frontend
+```
 
 ## Usage
 
