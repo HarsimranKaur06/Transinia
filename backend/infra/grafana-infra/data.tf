@@ -1,7 +1,13 @@
 # Import existing VPC and subnets from ECS infrastructure
 data "aws_vpc" "main" {
-  tags = {
-    Name = "${local.app}-${local.env}-vpc"
+  filter {
+    name   = "tag:Application"
+    values = [local.app]
+  }
+
+  filter {
+    name   = "tag:Environment"
+    values = [local.env]
   }
 }
 
@@ -11,15 +17,14 @@ data "aws_subnets" "private" {
     values = [data.aws_vpc.main.id]
   }
 
-  tags = {
-    Name = "${local.app}-${local.env}-private-*"
+  filter {
+    name   = "tag:Type"
+    values = ["private"]
   }
 }
 
 data "aws_lb" "main" {
-  tags = {
-    Name = "${local.app}-${local.env}-alb"
-  }
+  name = "${local.app}-${local.env}-alb"
 }
 
 data "aws_lb_listener" "http" {
@@ -33,8 +38,5 @@ data "aws_ecs_cluster" "main" {
 
 data "aws_security_group" "alb" {
   vpc_id = data.aws_vpc.main.id
-
-  tags = {
-    Name = "${local.app}-${local.env}-alb-sg"
-  }
+  name   = "${local.app}-${local.env}-alb-sg"
 }
