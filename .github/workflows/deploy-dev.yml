@@ -46,19 +46,6 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
-
-      - name: Check for code changes
-        id: code-changes
-        run: |
-          if git diff --name-only HEAD^ HEAD | grep -qE "^(backend/(src|scripts|requirements\.txt|Dockerfile|run_.*\.py)|frontend/(src|public|package\.json|Dockerfile|next\.config))"; then
-            echo "has_changes=true" >> $GITHUB_OUTPUT
-            echo "Code changes detected"
-          else
-            echo "has_changes=false" >> $GITHUB_OUTPUT
-            echo "No code changes detected (infra changes ignored)"
-          fi
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
@@ -111,28 +98,12 @@ jobs:
           aws ecr describe-repositories --repository-names $BACKEND_ECR_REPO >/dev/null 2>&1 || aws ecr create-repository --repository-name $BACKEND_ECR_REPO
           aws ecr describe-repositories --repository-names $FRONTEND_ECR_REPO >/dev/null 2>&1 || aws ecr create-repository --repository-name $FRONTEND_ECR_REPO
 
-      - name: Check if services are running
-        id: check-services
-        run: |
-          BACKEND_RUNNING=$(aws ecs describe-services --cluster $CLUSTER_NAME --services $BACKEND_SERVICE --query "services[0].runningCount" --output text 2>/dev/null || echo "0")
-          FRONTEND_RUNNING=$(aws ecs describe-services --cluster $CLUSTER_NAME --services $FRONTEND_SERVICE --query "services[0].runningCount" --output text 2>/dev/null || echo "0")
-          
-          if [ "$BACKEND_RUNNING" != "0" ] && [ "$FRONTEND_RUNNING" != "0" ] && [ "${{ steps.code-changes.outputs.has_changes }}" != "true" ]; then
-            echo "skip=true" >> $GITHUB_OUTPUT
-            echo "⏭️ Skipping container deployment - services running and no code changes"
-          else
-            echo "skip=false" >> $GITHUB_OUTPUT
-            echo "🚀 Deploying containers"
-          fi
-
       - name: Login to ECR
-        if: steps.check-services.outputs.skip != 'true'
         uses: aws-actions/amazon-ecr-login@v1
         with:
           mask-password: 'true'
 
       - name: Build and push backend image
-        if: steps.check-services.outputs.skip != 'true'
         id: build-backend
         uses: docker/build-push-action@v4
         with:
@@ -143,14 +114,12 @@ jobs:
 
       - name: Create CloudWatch Log Groups
         if: steps.check-services.outputs.skip != 'true'
-        run: |
           aws logs create-log-group --log-group-name "/ecs/transinia-dev-backend" --region ${{ env.AWS_REGION }} || true
           aws logs create-log-group --log-group-name "/ecs/transinia-dev-frontend" --region ${{ env.AWS_REGION }} || true
           aws logs create-log-group --log-group-name "/ecs/transinia-dev-grafana" --region ${{ env.AWS_REGION }} || true
 
       - name: Prepare backend task definition
         if: steps.check-services.outputs.skip != 'true'
-        run: |
           sed -i 's#\${AWS_REGION}#${{ env.AWS_REGION }}#g' .github/ecs/taskdef-backend.json
           sed -i 's#\${ECS_EXECUTION_ROLE_ARN}#arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/transinia-dev-ecsTaskExecutionRole#g' .github/ecs/taskdef-backend.json
           sed -i 's#\${ECS_TASK_ROLE_ARN}#arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/transinia-dev-ecsTaskRole#g' .github/ecs/taskdef-backend.json
@@ -166,8 +135,7 @@ jobs:
 
       - name: Render backend task definition
         if: steps.check-services.outputs.skip != 'true'
-        id: render-backend
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        ises: aws-actions/amazon-ecs-render-task-definition@v1
         with:
           task-definition: .github/ecs/taskdef-backend.json
           container-name: meeting-bot
@@ -175,7 +143,6 @@ jobs:
 
       - name: Deploy backend service
         if: steps.check-services.outputs.skip != 'true'
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
         with:
           task-definition: ${{ steps.render-backend.outputs.task-definition }}
           service: ${{ env.BACKEND_SERVICE }}
@@ -192,8 +159,7 @@ jobs:
       - name: Build and push frontend image
         if: steps.check-services.outputs.skip != 'true'
         id: build-frontend
-        uses: docker/build-push-action@v4
-        with:
+        uith:
           context: ./frontend
           file: ./frontend/Dockerfile
           push: true
@@ -206,7 +172,6 @@ jobs:
       - name: Prepare frontend task definition
         if: steps.check-services.outputs.skip != 'true'
         run: |
-          sed -i 's#\${AWS_REGION}#${{ env.AWS_REGION }}#g' .github/ecs/taskdef-frontend.json
           sed -i 's#\${ECS_EXECUTION_ROLE_ARN}#arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/transinia-dev-ecsTaskExecutionRole#g' .github/ecs/taskdef-frontend.json
           sed -i 's#\${ECS_TASK_ROLE_ARN}#arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/transinia-dev-ecsTaskRole#g' .github/ecs/taskdef-frontend.json
           sed -i 's#\${BACKEND_API_URL}#${{ steps.set-backend-url.outputs.backend_url }}#g' .github/ecs/taskdef-frontend.json
@@ -215,8 +180,7 @@ jobs:
         if: steps.check-services.outputs.skip != 'true'
         id: render-frontend
         uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: .github/ecs/taskdef-frontend.json
+        w task-definition: .github/ecs/taskdef-frontend.json
           container-name: frontend
           image: ${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:latest
 
@@ -224,7 +188,6 @@ jobs:
         if: steps.check-services.outputs.skip != 'true'
         uses: aws-actions/amazon-ecs-deploy-task-definition@v1
         with:
-          task-definition: ${{ steps.render-frontend.outputs.task-definition }}
           service: ${{ env.FRONTEND_SERVICE }}
           cluster: ${{ env.CLUSTER_NAME }}
           wait-for-service-stability: true
@@ -233,7 +196,6 @@ jobs:
         if: steps.check-services.outputs.skip != 'true'
         run: |
           echo "Forcing ECS service update to pick up latest tasks..."
-          aws ecs update-service --cluster $CLUSTER_NAME --service $BACKEND_SERVICE --force-new-deployment
           aws ecs update-service --cluster $CLUSTER_NAME --service $FRONTEND_SERVICE --force-new-deployment
 
       - name: Wait for services to stabilize
@@ -241,7 +203,6 @@ jobs:
         run: |
           echo "Waiting for frontend service stabilization..."
           aws ecs wait services-stable --cluster $CLUSTER_NAME --services $FRONTEND_SERVICE
-          echo "Frontend stable."
           echo "Waiting for backend service stabilization..."
           aws ecs wait services-stable --cluster $CLUSTER_NAME --services $BACKEND_SERVICE
           echo "Backend stable."
