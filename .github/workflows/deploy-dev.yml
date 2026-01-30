@@ -134,15 +134,15 @@ jobs:
           sed -i 's#\${SENTRY_DSN}#${{ env.SENTRY_DSN }}#g' .github/ecs/taskdef-backend.json
 
       - name: Render backend task definition
-        if: steps.check-services.outputs.skip != 'true'
-        ises: aws-actions/amazon-ecs-render-task-definition@v1
+        id: render-backend
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
           task-definition: .github/ecs/taskdef-backend.json
           container-name: meeting-bot
           image: ${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:latest
 
       - name: Deploy backend service
-        if: steps.check-services.outputs.skip != 'true'
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
         with:
           task-definition: ${{ steps.render-backend.outputs.task-definition }}
           service: ${{ env.BACKEND_SERVICE }}
@@ -157,9 +157,9 @@ jobs:
           echo "Using BACKEND_API_URL=http://${{ env.ALB_DNS_NAME }}"
 
       - name: Build and push frontend image
-        if: steps.check-services.outputs.skip != 'true'
         id: build-frontend
-        uith:
+        uses: docker/build-push-action@v4
+        with:
           context: ./frontend
           file: ./frontend/Dockerfile
           push: true
