@@ -57,7 +57,7 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
-          terraform_version: 1.5.0
+          terraform_version: 1.7.0
 
       - name: Deploy S3 Infrastructure
         working-directory: backend/infra/s3-bucket-infra
@@ -191,7 +191,7 @@ jobs:
       - name: Setup Terraform for Grafana
         uses: hashicorp/setup-terraform@v2
         with:
-          terraform_version: 1.5.0
+          terraform_version: 1.7.0
 
       - name: Deploy Grafana Infrastructure
         working-directory: backend/infra/grafana-infra
@@ -232,7 +232,7 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
-          terraform_version: 1.5.0
+          terraform_version: 1.7.0
 
       - name: Destroy Grafana Infrastructure
         working-directory: backend/infra/grafana-infra
