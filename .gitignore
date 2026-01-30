@@ -81,8 +81,10 @@ docker-compose.override.yml
 *.tfstate.*
 *.tfplan
 tf.plan
-*.tfvars
-!terraform.tfvars.example
+# Allow terraform.tfvars and prod.tfvars (secrets are in GitHub Actions)
+!terraform.tfvars
+!prod.tfvars
+!test.tfvars
 **/*.exe
 **/terraform-provider-*
 .terraform.lock.hcl
