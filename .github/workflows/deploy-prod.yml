@@ -59,14 +59,34 @@ jobs:
         with:
           terraform_version: 1.7.0
 
+      - name: Check if S3 buckets exist
+        id: check-s3
+        run: |
+          if aws s3api head-bucket --bucket ${{ env.S3_BUCKET_RAW }} 2>/dev/null; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Deploy S3 Infrastructure
+        if: steps.check-s3.outputs.exists != 'true'
         working-directory: backend/infra/s3-bucket-infra
         run: |
           terraform init
           terraform workspace select prod || terraform workspace new prod
           terraform apply -var-file="prod.tfvars" -auto-approve
 
+      - name: Check if DynamoDB tables exist
+        id: check-dynamodb
+        run: |
+          if aws dynamodb describe-table --table-name ${{ env.DYNAMODB_TABLE_MEETINGS }} 2>/dev/null; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Deploy DynamoDB Infrastructure
+        if: steps.check-dynamodb.outputs.exists != 'true'
         working-directory: backend/infra/dynamodb-infra
         run: |
           terraform init
@@ -188,12 +208,17 @@ jobs:
           aws ecs wait services-stable --cluster $CLUSTER_NAME --services $BACKEND_SERVICE
           echo "Backend stable."
 
-      - name: Setup Terraform for Grafana
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: 1.7.0
+      - name: Check if Grafana service exists
+        id: check-grafana
+        run: |
+          if aws ecs describe-services --cluster $CLUSTER_NAME --services transinia-prod-grafana-service --query "services[0].status" --output text 2>/dev/null | grep -q "ACTIVE"; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Deploy Grafana Infrastructure
+        if: steps.check-grafana.outputs.exists != 'true'
         working-directory: backend/infra/grafana-infra
         run: |
           terraform init
