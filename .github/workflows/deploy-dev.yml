@@ -113,13 +113,13 @@ jobs:
           tags: ${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:latest,${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:${{ github.sha }}
 
       - name: Create CloudWatch Log Groups
-        if: steps.check-services.outputs.skip != 'true'
+        run: |
           aws logs create-log-group --log-group-name "/ecs/transinia-dev-backend" --region ${{ env.AWS_REGION }} || true
           aws logs create-log-group --log-group-name "/ecs/transinia-dev-frontend" --region ${{ env.AWS_REGION }} || true
           aws logs create-log-group --log-group-name "/ecs/transinia-dev-grafana" --region ${{ env.AWS_REGION }} || true
 
       - name: Prepare backend task definition
-        if: steps.check-services.outputs.skip != 'true'
+        run: |
           sed -i 's#\${AWS_REGION}#${{ env.AWS_REGION }}#g' .github/ecs/taskdef-backend.json
           sed -i 's#\${ECS_EXECUTION_ROLE_ARN}#arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/transinia-dev-ecsTaskExecutionRole#g' .github/ecs/taskdef-backend.json
           sed -i 's#\${ECS_TASK_ROLE_ARN}#arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/transinia-dev-ecsTaskRole#g' .github/ecs/taskdef-backend.json
@@ -170,14 +170,13 @@ jobs:
             NEXT_PUBLIC_ENVIRONMENT=${{ env.ENVIRONMENT }}
 
       - name: Prepare frontend task definition
-        if: steps.check-services.outputs.skip != 'true'
         run: |
+          sed -i 's#\${AWS_REGION}#${{ env.AWS_REGION }}#g' .github/ecs/taskdef-frontend.json
           sed -i 's#\${ECS_EXECUTION_ROLE_ARN}#arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/transinia-dev-ecsTaskExecutionRole#g' .github/ecs/taskdef-frontend.json
           sed -i 's#\${ECS_TASK_ROLE_ARN}#arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/transinia-dev-ecsTaskRole#g' .github/ecs/taskdef-frontend.json
           sed -i 's#\${BACKEND_API_URL}#${{ steps.set-backend-url.outputs.backend_url }}#g' .github/ecs/taskdef-frontend.json
 
       - name: Render frontend task definition
-        if: steps.check-services.outputs.skip != 'true'
         id: render-frontend
         uses: aws-actions/amazon-ecs-render-task-definition@v1
         w task-definition: .github/ecs/taskdef-frontend.json
