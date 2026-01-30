@@ -18,8 +18,8 @@ data "aws_subnets" "private" {
   }
 
   filter {
-    name   = "tag:Type"
-    values = ["private"]
+    name   = "tag:Name"
+    values = ["${local.app}-${local.env}-private-*"]
   }
 }
 

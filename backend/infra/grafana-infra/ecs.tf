@@ -1,6 +1,12 @@
-# Use existing CloudWatch log group (created by GitHub Actions)
-data "aws_cloudwatch_log_group" "grafana" {
-  name = "/ecs/${local.app}-${local.env}-grafana"
+# CloudWatch log group for Grafana
+resource "aws_cloudwatch_log_group" "grafana" {
+  name              = "/ecs/${local.app}-${local.env}-grafana"
+  retention_in_days = 7
+  tags              = local.tags
+
+  lifecycle {
+    prevent_destroy = false
+  }
 }
 
 # ECS task definition for Grafana
@@ -72,8 +78,13 @@ resource "aws_ecs_task_definition" "grafana" {
     name = "grafana-storage"
 
     efs_volume_configuration {
-      file_system_id     = aws_efs_file_system.grafana.id
-      transit_encryption = "ENABLED"
+      file_system_id          = aws_efs_file_system.grafana.id
+      transit_encryption      = "ENABLED"
+      transit_encryption_port = 2049
+      authorization_config {
+        access_point_id = aws_efs_access_point.grafana.id
+        iam             = "DISABLED"
+      }
     }
   }
 

@@ -52,12 +52,12 @@ jobs:
       - name: Check for code changes
         id: code-changes
         run: |
-          if git diff --name-only HEAD^ HEAD | grep -qE "^(backend|frontend)/"; then
+          if git diff --name-only HEAD^ HEAD | grep -qE "^(backend/(src|scripts|requirements\.txt|Dockerfile|run_.*\.py)|frontend/(src|public|package\.json|Dockerfile|next\.config))"; then
             echo "has_changes=true" >> $GITHUB_OUTPUT
             echo "Code changes detected"
           else
             echo "has_changes=false" >> $GITHUB_OUTPUT
-            echo "No code changes detected"
+            echo "No code changes detected (infra changes ignored)"
           fi
 
       - name: Configure AWS credentials

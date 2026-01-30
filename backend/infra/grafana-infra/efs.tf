@@ -8,6 +8,26 @@ resource "aws_efs_file_system" "grafana" {
   })
 }
 
+resource "aws_efs_access_point" "grafana" {
+  file_system_id = aws_efs_file_system.grafana.id
+
+  posix_user {
+    uid = 472
+    gid = 0
+  }
+
+  root_directory {
+    path = "/grafana"
+    creation_info {
+      owner_uid   = 472
+      owner_gid   = 0
+      permissions = "0755"
+    }
+  }
+
+  tags = local.tags
+}
+
 resource "aws_efs_mount_target" "grafana" {
   count = length(data.aws_subnets.private.ids)
 
