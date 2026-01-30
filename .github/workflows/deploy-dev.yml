@@ -179,26 +179,26 @@ jobs:
       - name: Render frontend task definition
         id: render-frontend
         uses: aws-actions/amazon-ecs-render-task-definition@v1
-        w task-definition: .github/ecs/taskdef-frontend.json
+        with:
+          task-definition: .github/ecs/taskdef-frontend.json
           container-name: frontend
           image: ${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:latest
 
       - name: Deploy frontend service
-        if: steps.check-services.outputs.skip != 'true'
         uses: aws-actions/amazon-ecs-deploy-task-definition@v1
         with:
+          task-definition: ${{ steps.render-frontend.outputs.task-definition }}
           service: ${{ env.FRONTEND_SERVICE }}
           cluster: ${{ env.CLUSTER_NAME }}
           wait-for-service-stability: true
 
       - name: Force service update for new tasks
-        if: steps.check-services.outputs.skip != 'true'
         run: |
           echo "Forcing ECS service update to pick up latest tasks..."
+          aws ecs update-service --cluster $CLUSTER_NAME --service $BACKEND_SERVICE --force-new-deployment
           aws ecs update-service --cluster $CLUSTER_NAME --service $FRONTEND_SERVICE --force-new-deployment
 
       - name: Wait for services to stabilize
-        if: steps.check-services.outputs.skip != 'true'
         run: |
           echo "Waiting for frontend service stabilization..."
           aws ecs wait services-stable --cluster $CLUSTER_NAME --services $FRONTEND_SERVICE
