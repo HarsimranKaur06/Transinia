@@ -1,8 +1,6 @@
-# CloudWatch log group for Grafana
-resource "aws_cloudwatch_log_group" "grafana" {
-  name              = "/ecs/${local.app}-${local.env}-grafana"
-  retention_in_days = 7
-  tags              = local.tags
+# Use existing CloudWatch log group (created by GitHub Actions)
+data "aws_cloudwatch_log_group" "grafana" {
+  name = "/ecs/${local.app}-${local.env}-grafana"
 }
 
 # ECS task definition for Grafana
