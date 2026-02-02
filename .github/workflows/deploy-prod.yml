@@ -208,13 +208,79 @@ jobs:
           aws ecs wait services-stable --cluster $CLUSTER_NAME --services $BACKEND_SERVICE
           echo "Backend stable."
 
-      - name: Check if Grafana service exists
+      - name: Check and cleanup partial Grafana infrastructure
         id: check-grafana
         run: |
-          if aws ecs describe-services --cluster $CLUSTER_NAME --services transinia-prod-grafana-service --query "services[0].status" --output text 2>/dev/null | grep -q "ACTIVE"; then
+          # Check if Grafana resources exist
+          SERVICE_EXISTS=false
+          LOG_GROUP_EXISTS=false
+          EFS_EXISTS=false
+          
+          # Check ECS service
+          if aws ecs describe-services --cluster transinia-prod-cluster --services transinia-prod-grafana-service --query "services[0].status" --output text 2>/dev/null | grep -q "ACTIVE"; then
+            SERVICE_EXISTS=true
+          fi
+          
+          # Check CloudWatch log group
+          if aws logs describe-log-groups --log-group-name-prefix "/ecs/transinia-prod-grafana" --query "logGroups[0].logGroupName" --output text 2>/dev/null | grep -q "/ecs/transinia-prod-grafana"; then
+            LOG_GROUP_EXISTS=true
+          fi
+          
+          # Check EFS file system
+          EFS_ID=$(aws efs describe-file-systems --query "FileSystems[?CreationToken=='transinia-prod-grafana-efs'].FileSystemId" --output text 2>/dev/null)
+          if [ ! -z "$EFS_ID" ]; then
+            EFS_EXISTS=true
+          fi
+          
+          # Count how many resources exist
+          COUNT=0
+          [ "$SERVICE_EXISTS" = true ] && COUNT=$((COUNT+1))
+          [ "$LOG_GROUP_EXISTS" = true ] && COUNT=$((COUNT+1))
+          [ "$EFS_EXISTS" = true ] && COUNT=$((COUNT+1))
+          
+          echo "📊 Grafana infrastructure status:"
+          echo "   Service: $SERVICE_EXISTS | Log Group: $LOG_GROUP_EXISTS | EFS: $EFS_EXISTS"
+          
+          # If all 3 exist, skip deployment
+          if [ $COUNT -eq 3 ]; then
             echo "exists=true" >> $GITHUB_OUTPUT
+            echo "✅ Complete Grafana infrastructure exists - skipping deployment"
+          # If partial deployment (1 or 2 exist), clean up and redeploy
+          elif [ $COUNT -gt 0 ]; then
+            echo "⚠️  Partial Grafana deployment detected ($COUNT/3 resources)"
+            echo "🧹 Cleaning up partial resources..."
+            
+            # Delete log group if exists
+            if [ "$LOG_GROUP_EXISTS" = true ]; then
+              echo "   Deleting log group..."
+              aws logs delete-log-group --log-group-name "/ecs/transinia-prod-grafana" || true
+            fi
+            
+            # Delete EFS if exists (must delete mount targets first)
+            if [ "$EFS_EXISTS" = true ]; then
+              echo "   Deleting EFS mount targets..."
+              for MT in $(aws efs describe-mount-targets --file-system-id $EFS_ID --query "MountTargets[].MountTargetId" --output text); do
+                aws efs delete-mount-target --mount-target-id $MT || true
+              done
+              echo "   Waiting for mount targets to delete..."
+              sleep 30
+              echo "   Deleting EFS file system..."
+              aws efs delete-file-system --file-system-id $EFS_ID || true
+            fi
+            
+            # Stop/delete service if exists
+            if [ "$SERVICE_EXISTS" = true ]; then
+              echo "   Stopping Grafana service..."
+              aws ecs update-service --cluster transinia-prod-cluster --service transinia-prod-grafana-service --desired-count 0 || true
+              sleep 10
+              aws ecs delete-service --cluster transinia-prod-cluster --service transinia-prod-grafana-service --force || true
+            fi
+            
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "✅ Cleanup complete - will deploy fresh Grafana infrastructure"
           else
             echo "exists=false" >> $GITHUB_OUTPUT
+            echo "✅ No Grafana infrastructure found - will deploy"
           fi
 
       - name: Deploy Grafana Infrastructure

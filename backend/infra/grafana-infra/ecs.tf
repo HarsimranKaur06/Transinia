@@ -1,13 +1,5 @@
-# CloudWatch log group for Grafana
-resource "aws_cloudwatch_log_group" "grafana" {
-  name              = "/ecs/${local.app}-${local.env}-grafana"
-  retention_in_days = 7
-  tags              = local.tags
-
-  lifecycle {
-    prevent_destroy = false
-  }
-}
+# CloudWatch log group is created by GitHub Actions workflow
+# to avoid conflicts with pre-existing log groups
 
 # ECS task definition for Grafana
 resource "aws_ecs_task_definition" "grafana" {
@@ -66,7 +58,7 @@ resource "aws_ecs_task_definition" "grafana" {
       logConfiguration = {
         logDriver = "awslogs"
         options = {
-          awslogs-group         = aws_cloudwatch_log_group.grafana.name
+          awslogs-group         = "/ecs/${local.app}-${local.env}-grafana"
           awslogs-region        = var.aws_region
           awslogs-stream-prefix = "grafana"
         }
