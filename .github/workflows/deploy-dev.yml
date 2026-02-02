@@ -246,33 +246,74 @@ jobs:
           # If partial deployment (1 or 2 exist), clean up and redeploy
           elif [ $COUNT -gt 0 ]; then
             echo "⚠️  Partial Grafana deployment detected ($COUNT/3 resources)"
-            echo "🧹 Cleaning up partial resources..."
+            echo "🧹 Cleaning up all Grafana resources for fresh deployment..."
             
-            # Delete log group if exists
+            # Stop/delete service if exists
+            if [ "$SERVICE_EXISTS" = true ]; then
+              echo "   Stopping Grafana service..."
+              aws ecs update-service --cluster $CLUSTER_NAME --service transinia-dev-grafana-service --desired-count 0 || true
+              sleep 15
+              echo "   Deleting Grafana service..."
+              aws ecs delete-service --cluster $CLUSTER_NAME --service transinia-dev-grafana-service --force || true
+              sleep 10
+            fi
+            
+            # Delete task definitions
+            echo "   Deregistering task definitions..."
+            for TASK_DEF in $(aws ecs list-task-definitions --family-prefix transinia-dev-grafana --query "taskDefinitionArns[]" --output text); do
+              aws ecs deregister-task-definition --task-definition $TASK_DEF || true
+            done
+            
+            # Delete ALB target group
+            echo "   Deleting target group..."
+            TG_ARN=$(aws elbv2 describe-target-groups --names transinia-dev-grafana-tg --query "TargetGroups[0].TargetGroupArn" --output text 2>/dev/null)
+            if [ "$TG_ARN" != "None" ] && [ ! -z "$TG_ARN" ]; then
+              # Delete listener rules first
+              for RULE_ARN in $(aws elbv2 describe-rules --listener-arn arn:aws:elasticloadbalancing:${{ env.AWS_REGION }}:${{ env.AWS_ACCOUNT_ID }}:listener/app/transinia-dev-alb/*/5adb3d6d7ce2c90c --query "Rules[?Priority=='5'].RuleArn" --output text 2>/dev/null); do
+                aws elbv2 delete-rule --rule-arn $RULE_ARN || true
+              done
+              sleep 5
+              aws elbv2 delete-target-group --target-group-arn $TG_ARN || true
+            fi
+            
+            # Delete log group
             if [ "$LOG_GROUP_EXISTS" = true ]; then
               echo "   Deleting log group..."
               aws logs delete-log-group --log-group-name "/ecs/transinia-dev-grafana" || true
             fi
             
-            # Delete EFS if exists (must delete mount targets first)
+            # Delete EFS (must delete mount targets first)
             if [ "$EFS_EXISTS" = true ]; then
               echo "   Deleting EFS mount targets..."
               for MT in $(aws efs describe-mount-targets --file-system-id $EFS_ID --query "MountTargets[].MountTargetId" --output text); do
                 aws efs delete-mount-target --mount-target-id $MT || true
               done
               echo "   Waiting for mount targets to delete..."
-              sleep 30
+              sleep 45
               echo "   Deleting EFS file system..."
               aws efs delete-file-system --file-system-id $EFS_ID || true
             fi
             
-            # Stop/delete service if exists
-            if [ "$SERVICE_EXISTS" = true ]; then
-              echo "   Stopping Grafana service..."
-              aws ecs update-service --cluster $CLUSTER_NAME --service transinia-dev-grafana-service --desired-count 0 || true
-              sleep 10
-              aws ecs delete-service --cluster $CLUSTER_NAME --service transinia-dev-grafana-service --force || true
-            fi
+            # Delete security groups (must be done after service is deleted)
+            echo "   Deleting security groups..."
+            sleep 10
+            aws ec2 delete-security-group --group-name transinia-dev-grafana-tasks-sg || true
+            aws ec2 delete-security-group --group-name transinia-dev-grafana-efs-sg || true
+            
+            # Delete IAM roles (must detach policies first)
+            echo "   Deleting IAM roles..."
+            for ROLE in transinia-dev-grafana-task-role transinia-dev-grafana-execution-role; do
+              # Detach managed policies
+              for POLICY_ARN in $(aws iam list-attached-role-policies --role-name $ROLE --query "AttachedPolicies[].PolicyArn" --output text 2>/dev/null); do
+                aws iam detach-role-policy --role-name $ROLE --policy-arn $POLICY_ARN || true
+              done
+              # Delete inline policies
+              for POLICY_NAME in $(aws iam list-role-policies --role-name $ROLE --query "PolicyNames[]" --output text 2>/dev/null); do
+                aws iam delete-role-policy --role-name $ROLE --policy-name $POLICY_NAME || true
+              done
+              # Delete role
+              aws iam delete-role --role-name $ROLE || true
+            done
             
             echo "exists=false" >> $GITHUB_OUTPUT
             echo "✅ Cleanup complete - will deploy fresh Grafana infrastructure"
