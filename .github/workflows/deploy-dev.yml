@@ -206,117 +206,85 @@ jobs:
           aws ecs wait services-stable --cluster $CLUSTER_NAME --services $BACKEND_SERVICE
           echo "Backend stable."
 
-      - name: Check and cleanup partial Grafana infrastructure
+      - name: Check and import existing Grafana infrastructure
         id: check-grafana
+        working-directory: backend/infra/grafana-infra
         run: |
-          # Check if Grafana resources exist
-          SERVICE_EXISTS=false
-          LOG_GROUP_EXISTS=false
-          EFS_EXISTS=false
+          # Initialize terraform first
+          terraform init
+          terraform workspace select dev || terraform workspace new dev
           
-          # Check ECS service
-          if aws ecs describe-services --cluster $CLUSTER_NAME --services transinia-dev-grafana-service --query "services[0].status" --output text 2>/dev/null | grep -q "ACTIVE"; then
-            SERVICE_EXISTS=true
-          fi
+          # Check if Grafana service exists
+          SERVICE_EXISTS=$(aws ecs describe-services --cluster $CLUSTER_NAME --services transinia-dev-grafana-service --query "services[0].status" --output text 2>/dev/null)
           
-          # Check CloudWatch log group
-          if aws logs describe-log-groups --log-group-name-prefix "/ecs/transinia-dev-grafana" --query "logGroups[0].logGroupName" --output text 2>/dev/null | grep -q "/ecs/transinia-dev-grafana"; then
-            LOG_GROUP_EXISTS=true
-          fi
-          
-          # Check EFS file system
-          EFS_ID=$(aws efs describe-file-systems --query "FileSystems[?CreationToken=='transinia-dev-grafana-efs'].FileSystemId" --output text 2>/dev/null)
-          if [ ! -z "$EFS_ID" ]; then
-            EFS_EXISTS=true
-          fi
-          
-          # Count how many resources exist
-          COUNT=0
-          [ "$SERVICE_EXISTS" = true ] && COUNT=$((COUNT+1))
-          [ "$LOG_GROUP_EXISTS" = true ] && COUNT=$((COUNT+1))
-          [ "$EFS_EXISTS" = true ] && COUNT=$((COUNT+1))
-          
-          echo "📊 Grafana infrastructure status:"
-          echo "   Service: $SERVICE_EXISTS | Log Group: $LOG_GROUP_EXISTS | EFS: $EFS_EXISTS"
-          
-          # If all 3 exist, skip deployment
-          if [ $COUNT -eq 3 ]; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-            echo "✅ Complete Grafana infrastructure exists - skipping deployment"
-          # If partial deployment (1 or 2 exist), clean up and redeploy
-          elif [ $COUNT -gt 0 ]; then
-            echo "⚠️  Partial Grafana deployment detected ($COUNT/3 resources)"
-            echo "🧹 Cleaning up all Grafana resources for fresh deployment..."
+          if [ "$SERVICE_EXISTS" == "ACTIVE" ]; then
+            echo "✅ Grafana service already running - importing existing resources into Terraform state"
             
-            # Stop/delete service if exists
-            if [ "$SERVICE_EXISTS" = true ]; then
-              echo "   Stopping Grafana service..."
-              aws ecs update-service --cluster $CLUSTER_NAME --service transinia-dev-grafana-service --desired-count 0 || true
-              sleep 15
-              echo "   Deleting Grafana service..."
-              aws ecs delete-service --cluster $CLUSTER_NAME --service transinia-dev-grafana-service --force || true
-              sleep 10
+            # Import ECS service
+            terraform import 'aws_ecs_service.grafana' transinia-dev-cluster/transinia-dev-grafana-service 2>/dev/null || echo "Service already in state or doesn't exist"
+            
+            # Import task definition (get latest ARN)
+            TASK_DEF_ARN=$(aws ecs describe-services --cluster $CLUSTER_NAME --services transinia-dev-grafana-service --query "services[0].taskDefinition" --output text 2>/dev/null)
+            if [ ! -z "$TASK_DEF_ARN" ] && [ "$TASK_DEF_ARN" != "None" ]; then
+              terraform import 'aws_ecs_task_definition.grafana' "$TASK_DEF_ARN" 2>/dev/null || echo "Task def already in state"
             fi
             
-            # Delete task definitions
-            echo "   Deregistering task definitions..."
-            for TASK_DEF in $(aws ecs list-task-definitions --family-prefix transinia-dev-grafana --query "taskDefinitionArns[]" --output text); do
-              aws ecs deregister-task-definition --task-definition $TASK_DEF || true
-            done
-            
-            # Delete ALB target group
-            echo "   Deleting target group..."
+            # Import target group
             TG_ARN=$(aws elbv2 describe-target-groups --names transinia-dev-grafana-tg --query "TargetGroups[0].TargetGroupArn" --output text 2>/dev/null)
-            if [ "$TG_ARN" != "None" ] && [ ! -z "$TG_ARN" ]; then
-              # Delete listener rules first
-              for RULE_ARN in $(aws elbv2 describe-rules --listener-arn arn:aws:elasticloadbalancing:${{ env.AWS_REGION }}:${{ env.AWS_ACCOUNT_ID }}:listener/app/transinia-dev-alb/*/5adb3d6d7ce2c90c --query "Rules[?Priority=='5'].RuleArn" --output text 2>/dev/null); do
-                aws elbv2 delete-rule --rule-arn $RULE_ARN || true
-              done
-              sleep 5
-              aws elbv2 delete-target-group --target-group-arn $TG_ARN || true
+            if [ ! -z "$TG_ARN" ] && [ "$TG_ARN" != "None" ]; then
+              terraform import 'aws_lb_target_group.grafana' "$TG_ARN" 2>/dev/null || echo "Target group already in state"
             fi
             
-            # Delete log group
-            if [ "$LOG_GROUP_EXISTS" = true ]; then
-              echo "   Deleting log group..."
-              aws logs delete-log-group --log-group-name "/ecs/transinia-dev-grafana" || true
+            # Import listener rule (find by priority 5)
+            LISTENER_ARN=$(aws elbv2 describe-listeners --load-balancer-arn arn:aws:elasticloadbalancing:${{ env.AWS_REGION }}:${{ env.AWS_ACCOUNT_ID }}:loadbalancer/app/transinia-dev-alb/* --query "Listeners[?Port==\`80\`].ListenerArn" --output text 2>/dev/null | head -1)
+            if [ ! -z "$LISTENER_ARN" ]; then
+              RULE_ARN=$(aws elbv2 describe-rules --listener-arn $LISTENER_ARN --query "Rules[?Priority==\`5\`].RuleArn" --output text 2>/dev/null)
+              if [ ! -z "$RULE_ARN" ] && [ "$RULE_ARN" != "None" ]; then
+                terraform import 'aws_lb_listener_rule.grafana' "$RULE_ARN" 2>/dev/null || echo "Listener rule already in state"
+              fi
             fi
             
-            # Delete EFS (must delete mount targets first)
-            if [ "$EFS_EXISTS" = true ]; then
-              echo "   Deleting EFS mount targets..."
-              for MT in $(aws efs describe-mount-targets --file-system-id $EFS_ID --query "MountTargets[].MountTargetId" --output text); do
-                aws efs delete-mount-target --mount-target-id $MT || true
+            # Import EFS
+            EFS_ID=$(aws efs describe-file-systems --query "FileSystems[?CreationToken=='transinia-dev-grafana-efs'].FileSystemId" --output text 2>/dev/null)
+            if [ ! -z "$EFS_ID" ] && [ "$EFS_ID" != "None" ]; then
+              terraform import 'aws_efs_file_system.grafana' "$EFS_ID" 2>/dev/null || echo "EFS already in state"
+              
+              # Import EFS access point
+              AP_ID=$(aws efs describe-access-points --file-system-id $EFS_ID --query "AccessPoints[0].AccessPointId" --output text 2>/dev/null)
+              if [ ! -z "$AP_ID" ] && [ "$AP_ID" != "None" ]; then
+                terraform import 'aws_efs_access_point.grafana' "$AP_ID" 2>/dev/null || echo "Access point already in state"
+              fi
+              
+              # Import mount targets
+              MT_IDS=$(aws efs describe-mount-targets --file-system-id $EFS_ID --query "MountTargets[].MountTargetId" --output text 2>/dev/null)
+              INDEX=0
+              for MT_ID in $MT_IDS; do
+                terraform import "aws_efs_mount_target.grafana[$INDEX]" "$MT_ID" 2>/dev/null || echo "Mount target $INDEX already in state"
+                INDEX=$((INDEX+1))
               done
-              echo "   Waiting for mount targets to delete..."
-              sleep 45
-              echo "   Deleting EFS file system..."
-              aws efs delete-file-system --file-system-id $EFS_ID || true
             fi
             
-            # Delete security groups (must be done after service is deleted)
-            echo "   Deleting security groups..."
-            sleep 10
-            aws ec2 delete-security-group --group-name transinia-dev-grafana-tasks-sg || true
-            aws ec2 delete-security-group --group-name transinia-dev-grafana-efs-sg || true
+            # Import security groups
+            SG_TASKS=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=transinia-dev-grafana-tasks-sg" --query "SecurityGroups[0].GroupId" --output text 2>/dev/null)
+            if [ ! -z "$SG_TASKS" ] && [ "$SG_TASKS" != "None" ]; then
+              terraform import 'aws_security_group.grafana_tasks' "$SG_TASKS" 2>/dev/null || echo "Tasks SG already in state"
+            fi
             
-            # Delete IAM roles (must detach policies first)
-            echo "   Deleting IAM roles..."
-            for ROLE in transinia-dev-grafana-task-role transinia-dev-grafana-execution-role; do
-              # Detach managed policies
-              for POLICY_ARN in $(aws iam list-attached-role-policies --role-name $ROLE --query "AttachedPolicies[].PolicyArn" --output text 2>/dev/null); do
-                aws iam detach-role-policy --role-name $ROLE --policy-arn $POLICY_ARN || true
-              done
-              # Delete inline policies
-              for POLICY_NAME in $(aws iam list-role-policies --role-name $ROLE --query "PolicyNames[]" --output text 2>/dev/null); do
-                aws iam delete-role-policy --role-name $ROLE --policy-name $POLICY_NAME || true
-              done
-              # Delete role
-              aws iam delete-role --role-name $ROLE || true
-            done
+            SG_EFS=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=transinia-dev-grafana-efs-sg" --query "SecurityGroups[0].GroupId" --output text 2>/dev/null)
+            if [ ! -z "$SG_EFS" ] && [ "$SG_EFS" != "None" ]; then
+              terraform import 'aws_security_group.efs' "$SG_EFS" 2>/dev/null || echo "EFS SG already in state"
+            fi
             
-            echo "exists=false" >> $GITHUB_OUTPUT
-            echo "✅ Cleanup complete - will deploy fresh Grafana infrastructure"
+            # Import IAM roles
+            terraform import 'aws_iam_role.grafana_task_role' transinia-dev-grafana-task-role 2>/dev/null || echo "Task role already in state"
+            terraform import 'aws_iam_role.grafana_execution_role' transinia-dev-grafana-execution-role 2>/dev/null || echo "Execution role already in state"
+            
+            # Import role policy attachments
+            terraform import 'aws_iam_role_policy_attachment.grafana_task_cloudwatch' transinia-dev-grafana-task-role/arn:aws:iam::aws:policy/CloudWatchReadOnlyAccess 2>/dev/null || echo "Policy attachment already in state"
+            terraform import 'aws_iam_role_policy_attachment.grafana_execution' transinia-dev-grafana-execution-role/arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy 2>/dev/null || echo "Execution policy already in state"
+            
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "✅ Existing resources imported - skipping deployment"
           else
             echo "exists=false" >> $GITHUB_OUTPUT
             echo "✅ No Grafana infrastructure found - will deploy"
@@ -326,8 +294,7 @@ jobs:
         if: steps.check-grafana.outputs.exists != 'true'
         working-directory: backend/infra/grafana-infra
         run: |
-          terraform init
-          terraform workspace select dev || terraform workspace new dev
+          # Terraform already initialized in check step
           terraform apply -var-file="terraform.tfvars" \
             -var="grafana_admin_password=${{ env.GRAFANA_ADMIN_PASSWORD }}" \
             -auto-approve
