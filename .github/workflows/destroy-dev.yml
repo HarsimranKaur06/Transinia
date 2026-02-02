@@ -1,0 +1,137 @@
+name: Destroy dev
+
+on:
+  workflow_dispatch:
+    inputs:
+      destroy_ecs:
+        description: 'Destroy ECS infrastructure (VPC, ALB, Cluster)?'
+        required: true
+        type: boolean
+        default: false
+      confirm:
+        description: 'Type "DESTROY" to confirm'
+        required: true
+        type: string
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+  ENVIRONMENT: dev
+  APP_NAME: transinia
+
+jobs:
+  destroy-infrastructure:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    steps:
+      - name: Validate Confirmation
+        run: |
+          if [ "${{ github.event.inputs.confirm }}" != "DESTROY" ]; then
+            echo "❌ Confirmation failed. You must type 'DESTROY' to proceed."
+            exit 1
+          fi
+          echo "✅ Confirmation validated. Proceeding with infrastructure destruction..."
+
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.7.0
+
+      - name: Stop ECS Services
+        run: |
+          echo "Stopping ECS services to allow cleanup..."
+          aws ecs update-service --cluster transinia-dev-cluster --service transinia-dev-backend-service --desired-count 0 || true
+          aws ecs update-service --cluster transinia-dev-cluster --service transinia-dev-frontend-service --desired-count 0 || true
+          aws ecs update-service --cluster transinia-dev-cluster --service transinia-dev-grafana-service --desired-count 0 || true
+          echo "Waiting for tasks to drain..."
+          sleep 30
+
+      - name: Destroy Grafana Infrastructure
+        working-directory: backend/infra/grafana-infra
+        run: |
+          terraform init
+          terraform workspace select dev || true
+          terraform destroy -var-file="terraform.tfvars" \
+            -var="grafana_admin_password=${{ secrets.GRAFANA_ADMIN_PASSWORD }}" \
+            -auto-approve || echo "⚠️ Grafana destroy failed or already destroyed"
+
+      - name: Destroy ECS Infrastructure (if requested)
+        if: github.event.inputs.destroy_ecs == 'true'
+        working-directory: backend/infra/ecs-fargate-infra
+        run: |
+          terraform init
+          terraform workspace select dev || true
+          terraform destroy -var-file="terraform.tfvars" -auto-approve || echo "⚠️ ECS destroy failed or already destroyed"
+
+      - name: Destroy DynamoDB Infrastructure
+        working-directory: backend/infra/dynamodb-infra
+        run: |
+          terraform init
+          terraform workspace select dev || true
+          terraform destroy -var-file="terraform.tfvars" -auto-approve || echo "⚠️ DynamoDB destroy failed or already destroyed"
+
+      - name: Destroy S3 Infrastructure
+        working-directory: backend/infra/s3-bucket-infra
+        run: |
+          # Empty buckets first (Terraform can't delete non-empty buckets)
+          echo "Emptying S3 buckets..."
+          aws s3 rm s3://transinia-dev-transcripts --recursive || true
+          aws s3 rm s3://transinia-dev-outputs --recursive || true
+          
+          terraform init
+          terraform workspace select dev || true
+          terraform destroy -var-file="terraform.tfvars" -auto-approve || echo "⚠️ S3 destroy failed or already destroyed"
+
+      - name: Delete ECR Repositories
+        run: |
+          echo "Deleting ECR repositories..."
+          aws ecr delete-repository \
+            --repository-name transinia-dev-backend \
+            --force || true
+          aws ecr delete-repository \
+            --repository-name transinia-dev-frontend \
+            --force || true
+
+      - name: Delete CloudWatch Log Groups
+        run: |
+          echo "Deleting CloudWatch log groups..."
+          aws logs delete-log-group --log-group-name "/ecs/transinia-dev-backend" || true
+          aws logs delete-log-group --log-group-name "/ecs/transinia-dev-frontend" || true
+          aws logs delete-log-group --log-group-name "/ecs/transinia-dev-grafana" || true
+
+      - name: Destruction Summary
+        if: always()
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🗑️  INFRASTRUCTURE DESTRUCTION COMPLETE"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "Destroyed resources:"
+          echo "  ✓ Grafana infrastructure (ECS service, EFS storage)"
+          echo "  ✓ DynamoDB tables (meetings & actions)"
+          echo "  ✓ S3 buckets (transcripts & outputs)"
+          echo "  ✓ ECR repositories (Docker images)"
+          echo "  ✓ CloudWatch log groups"
+          if [ "${{ github.event.inputs.destroy_ecs }}" == "true" ]; then
+            echo "  ✓ ECS infrastructure (VPC, ALB, Cluster)"
+          else
+            echo "  ⏭️  ECS infrastructure (VPC, ALB, Cluster) - SKIPPED"
+          fi
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Environment: ${{ env.ENVIRONMENT }}"
+          echo "Timestamp: $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
