@@ -35,6 +35,10 @@ resource "aws_security_group_rule" "alb_to_frontend" {
 resource "aws_ecs_cluster" "main" {
   name = "${local.app}-${local.env}-cluster"
   tags = local.tags
+  setting {
+    name  = "containerInsights"
+    value = "enabled"
+  }
 }
 
 # CloudWatch log groups
