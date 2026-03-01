@@ -72,7 +72,7 @@ jobs:
         if: steps.check-s3.outputs.exists != 'true'
         working-directory: backend/infra/s3-bucket-infra
         run: |
-          terraform init
+          terraform init -backend-config="key=s3-bucket-infra/dev/terraform.tfstate"
           terraform workspace select dev || terraform workspace new dev
           terraform apply -var-file="terraform.tfvars" -auto-approve
 
@@ -89,7 +89,7 @@ jobs:
         if: steps.check-dynamodb.outputs.exists != 'true'
         working-directory: backend/infra/dynamodb-infra
         run: |
-          terraform init
+          terraform init -backend-config="key=dynamodb-infra/dev/terraform.tfstate"
           terraform workspace select dev || terraform workspace new dev
           terraform apply -var-file="terraform.tfvars" -auto-approve
 
@@ -211,7 +211,7 @@ jobs:
         working-directory: backend/infra/grafana-infra
         run: |
           # Initialize terraform first
-          terraform init
+          terraform init -backend-config="key=grafana-infra/dev/terraform.tfstate"
           terraform workspace select dev || terraform workspace new dev
           
           # Check if Grafana service exists
@@ -334,7 +334,7 @@ jobs:
       - name: Destroy Grafana Infrastructure
         working-directory: backend/infra/grafana-infra
         run: |
-          terraform init
+          terraform init -backend-config="key=grafana-infra/dev/terraform.tfstate"
           terraform workspace select dev || true
           terraform destroy -var-file="terraform.tfvars" \
             -var="grafana_admin_password=${{ secrets.GRAFANA_ADMIN_PASSWORD }}" \
@@ -343,14 +343,14 @@ jobs:
       - name: Destroy DynamoDB Infrastructure
         working-directory: backend/infra/dynamodb-infra
         run: |
-          terraform init
+          terraform init -backend-config="key=dynamodb-infra/dev/terraform.tfstate"
           terraform workspace select dev || true
           terraform destroy -var-file="terraform.tfvars" -auto-approve || echo "DynamoDB destroy failed or already destroyed"
 
       - name: Destroy S3 Infrastructure
         working-directory: backend/infra/s3-bucket-infra
         run: |
-          terraform init
+          terraform init -backend-config="key=s3-bucket-infra/dev/terraform.tfstate"
           terraform workspace select dev || true
           terraform destroy -var-file="terraform.tfvars" -auto-approve || echo "S3 destroy failed or already destroyed"
 
