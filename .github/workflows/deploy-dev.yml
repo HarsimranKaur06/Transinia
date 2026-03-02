@@ -1,4 +1,4 @@
-name: Deploy Infrastructure (dev)
+name: Deploy dev
 
 on:
   push:
@@ -34,6 +34,7 @@ env:
   
   # Monitoring
   SENTRY_DSN: ${{ secrets.DEV_SENTRY_DSN }}
+  GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
 
 jobs:
   deploy-infrastructure:
@@ -53,33 +54,72 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.7.0
+
+      - name: Check if S3 buckets exist
+        id: check-s3
+        run: |
+          if aws s3api head-bucket --bucket ${{ env.S3_BUCKET_RAW }} 2>/dev/null; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Deploy S3 Infrastructure
+        if: steps.check-s3.outputs.exists != 'true'
+        working-directory: backend/infra/s3-bucket-infra
+        run: |
+          terraform init -backend-config="key=s3-bucket-infra/dev/terraform.tfstate"
+          terraform workspace select dev || terraform workspace new dev
+          terraform apply -var-file="terraform.tfvars" -auto-approve
+
+      - name: Check if DynamoDB tables exist
+        id: check-dynamodb
+        run: |
+          if aws dynamodb describe-table --table-name ${{ env.DYNAMODB_TABLE_MEETINGS }} 2>/dev/null; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Deploy DynamoDB Infrastructure
+        if: steps.check-dynamodb.outputs.exists != 'true'
+        working-directory: backend/infra/dynamodb-infra
+        run: |
+          terraform init -backend-config="key=dynamodb-infra/dev/terraform.tfstate"
+          terraform workspace select dev || terraform workspace new dev
+          terraform apply -var-file="terraform.tfvars" -auto-approve
+
       - name: Ensure ECR repositories exist
         run: |
           aws ecr describe-repositories --repository-names $BACKEND_ECR_REPO >/dev/null 2>&1 || aws ecr create-repository --repository-name $BACKEND_ECR_REPO
           aws ecr describe-repositories --repository-names $FRONTEND_ECR_REPO >/dev/null 2>&1 || aws ecr create-repository --repository-name $FRONTEND_ECR_REPO
 
-      - name: Configure S3 CORS for ALB access
-        run: |
-          cat > cors-config.json <<EOF
-          {
-            "CORSRules": [
-              {
-                "AllowedHeaders": ["*"],
-                "AllowedMethods": ["GET", "PUT", "POST", "DELETE", "HEAD"],
-                "AllowedOrigins": [
-                  "http://localhost:3000",
-                  "http://localhost:5000",
-                  "http://${{ env.ALB_DNS_NAME }}",
-                  "https://${{ env.ALB_DNS_NAME }}"
-                ],
-                "ExposeHeaders": ["ETag", "x-amz-server-side-encryption", "x-amz-request-id", "x-amz-id-2", "Content-Type", "Content-Length"],
-                "MaxAgeSeconds": 3000
-              }
-            ]
-          }
-          EOF
-          aws s3api put-bucket-cors --bucket ${{ env.S3_BUCKET_RAW }} --cors-configuration file://cors-config.json
-          aws s3api put-bucket-cors --bucket ${{ env.S3_BUCKET_PROCESSED }} --cors-configuration file://cors-config.json
+      # - name: Configure S3 CORS for ALB access
+      #   run: |
+      #     cat > cors-config.json <<EOF
+      #     {
+      #       "CORSRules": [
+      #         {
+      #           "AllowedHeaders": ["*"],
+      #           "AllowedMethods": ["GET", "PUT", "POST", "DELETE", "HEAD"],
+      #           "AllowedOrigins": [
+      #             "http://localhost:3000",
+      #             "http://localhost:5000",
+      #             "http://${{ env.ALB_DNS_NAME }}",
+      #             "https://${{ env.ALB_DNS_NAME }}"
+      #           ],
+      #           "ExposeHeaders": ["ETag", "x-amz-server-side-encryption", "x-amz-request-id", "x-amz-id-2", "Content-Type", "Content-Length"],
+      #           "MaxAgeSeconds": 3000
+      #         }
+      #       ]
+      #     }
+      #     EOF
+      #     aws s3api put-bucket-cors --bucket ${{ env.S3_BUCKET_RAW }} --cors-configuration file://cors-config.json
+      #     aws s3api put-bucket-cors --bucket ${{ env.S3_BUCKET_PROCESSED }} --cors-configuration file://cors-config.json
 
       - name: Login to ECR
         uses: aws-actions/amazon-ecr-login@v1
@@ -99,6 +139,7 @@ jobs:
         run: |
           aws logs create-log-group --log-group-name "/ecs/transinia-dev-backend" --region ${{ env.AWS_REGION }} || true
           aws logs create-log-group --log-group-name "/ecs/transinia-dev-frontend" --region ${{ env.AWS_REGION }} || true
+          aws logs create-log-group --log-group-name "/ecs/transinia-dev-grafana" --region ${{ env.AWS_REGION }} || true
 
       - name: Prepare backend task definition
         run: |
@@ -184,14 +225,181 @@ jobs:
         run: |
           echo "Waiting for frontend service stabilization..."
           aws ecs wait services-stable --cluster $CLUSTER_NAME --services $FRONTEND_SERVICE
-          echo "Frontend stable."
           echo "Waiting for backend service stabilization..."
           aws ecs wait services-stable --cluster $CLUSTER_NAME --services $BACKEND_SERVICE
           echo "Backend stable."
+
+      - name: Check and import existing Grafana infrastructure
+        id: check-grafana
+        working-directory: backend/infra/grafana-infra
+        run: |
+          # Initialize terraform first
+          terraform init -backend-config="key=grafana-infra/dev/terraform.tfstate"
+          terraform workspace select dev || terraform workspace new dev
+          
+          # Check if Grafana service exists
+          SERVICE_EXISTS=$(aws ecs describe-services --cluster $CLUSTER_NAME --services transinia-dev-grafana-service --query "services[0].status" --output text 2>/dev/null)
+          
+          if [ "$SERVICE_EXISTS" == "ACTIVE" ]; then
+            echo "Grafana service already running - importing existing resources into Terraform state"
+            
+            # Import ECS service
+            terraform import 'aws_ecs_service.grafana' transinia-dev-cluster/transinia-dev-grafana-service 2>/dev/null || echo "Service already in state or doesn't exist"
+            
+            # Import task definition (get latest ARN)
+            TASK_DEF_ARN=$(aws ecs describe-services --cluster $CLUSTER_NAME --services transinia-dev-grafana-service --query "services[0].taskDefinition" --output text 2>/dev/null)
+            if [ ! -z "$TASK_DEF_ARN" ] && [ "$TASK_DEF_ARN" != "None" ]; then
+              terraform import 'aws_ecs_task_definition.grafana' "$TASK_DEF_ARN" 2>/dev/null || echo "Task def already in state"
+            fi
+            
+            # Import target group
+            TG_ARN=$(aws elbv2 describe-target-groups --names transinia-dev-grafana-tg --query "TargetGroups[0].TargetGroupArn" --output text 2>/dev/null)
+            if [ ! -z "$TG_ARN" ] && [ "$TG_ARN" != "None" ]; then
+              terraform import 'aws_lb_target_group.grafana' "$TG_ARN" 2>/dev/null || echo "Target group already in state"
+            fi
+            
+            # Import listener rule (find by priority 5)
+            LISTENER_ARN=$(aws elbv2 describe-listeners --load-balancer-arn arn:aws:elasticloadbalancing:${{ env.AWS_REGION }}:${{ env.AWS_ACCOUNT_ID }}:loadbalancer/app/transinia-dev-alb/* --query "Listeners[?Port==\`80\`].ListenerArn" --output text 2>/dev/null | head -1)
+            if [ ! -z "$LISTENER_ARN" ]; then
+              RULE_ARN=$(aws elbv2 describe-rules --listener-arn $LISTENER_ARN --query "Rules[?Priority==\`5\`].RuleArn" --output text 2>/dev/null)
+              if [ ! -z "$RULE_ARN" ] && [ "$RULE_ARN" != "None" ]; then
+                terraform import 'aws_lb_listener_rule.grafana' "$RULE_ARN" 2>/dev/null || echo "Listener rule already in state"
+              fi
+            fi
+            
+            # Import EFS
+            EFS_ID=$(aws efs describe-file-systems --query "FileSystems[?CreationToken=='transinia-dev-grafana-efs'].FileSystemId" --output text 2>/dev/null)
+            if [ ! -z "$EFS_ID" ] && [ "$EFS_ID" != "None" ]; then
+              terraform import 'aws_efs_file_system.grafana' "$EFS_ID" 2>/dev/null || echo "EFS already in state"
+              
+              # Import EFS access point
+              AP_ID=$(aws efs describe-access-points --file-system-id $EFS_ID --query "AccessPoints[0].AccessPointId" --output text 2>/dev/null)
+              if [ ! -z "$AP_ID" ] && [ "$AP_ID" != "None" ]; then
+                terraform import 'aws_efs_access_point.grafana' "$AP_ID" 2>/dev/null || echo "Access point already in state"
+              fi
+              
+              # Import mount targets
+              MT_IDS=$(aws efs describe-mount-targets --file-system-id $EFS_ID --query "MountTargets[].MountTargetId" --output text 2>/dev/null)
+              INDEX=0
+              for MT_ID in $MT_IDS; do
+                terraform import "aws_efs_mount_target.grafana[$INDEX]" "$MT_ID" 2>/dev/null || echo "Mount target $INDEX already in state"
+                INDEX=$((INDEX+1))
+              done
+            fi
+            
+            # Import security groups
+            SG_TASKS=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=transinia-dev-grafana-tasks-sg" --query "SecurityGroups[0].GroupId" --output text 2>/dev/null)
+            if [ ! -z "$SG_TASKS" ] && [ "$SG_TASKS" != "None" ]; then
+              terraform import 'aws_security_group.grafana_tasks' "$SG_TASKS" 2>/dev/null || echo "Tasks SG already in state"
+            fi
+            
+            SG_EFS=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=transinia-dev-grafana-efs-sg" --query "SecurityGroups[0].GroupId" --output text 2>/dev/null)
+            if [ ! -z "$SG_EFS" ] && [ "$SG_EFS" != "None" ]; then
+              terraform import 'aws_security_group.efs' "$SG_EFS" 2>/dev/null || echo "EFS SG already in state"
+            fi
+            
+            # Import IAM roles
+            terraform import 'aws_iam_role.grafana_task_role' transinia-dev-grafana-task-role 2>/dev/null || echo "Task role already in state"
+            terraform import 'aws_iam_role.grafana_execution_role' transinia-dev-grafana-execution-role 2>/dev/null || echo "Execution role already in state"
+            
+            # Import role policy attachments
+            terraform import 'aws_iam_role_policy_attachment.grafana_task_cloudwatch' transinia-dev-grafana-task-role/arn:aws:iam::aws:policy/CloudWatchReadOnlyAccess 2>/dev/null || echo "Policy attachment already in state"
+            terraform import 'aws_iam_role_policy_attachment.grafana_execution' transinia-dev-grafana-execution-role/arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy 2>/dev/null || echo "Execution policy already in state"
+            
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Existing resources imported - skipping deployment"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "No Grafana infrastructure found - will deploy"
+          fi
+
+      - name: Deploy Grafana Infrastructure
+        if: steps.check-grafana.outputs.exists != 'true'
+        working-directory: backend/infra/grafana-infra
+        run: |
+          # Terraform already initialized in check step
+          terraform apply -var-file="terraform.tfvars" \
+            -var="grafana_admin_password=${{ env.GRAFANA_ADMIN_PASSWORD }}" \
+            -auto-approve
 
       - name: Final cleanup (log groups + verify)
         if: always()
         run: |
           aws logs create-log-group --log-group-name "/ecs/transinia-dev-backend" --region ${{ env.AWS_REGION }} || true
           aws logs create-log-group --log-group-name "/ecs/transinia-dev-frontend" --region ${{ env.AWS_REGION }} || true
+          aws logs create-log-group --log-group-name "/ecs/transinia-dev-grafana" --region ${{ env.AWS_REGION }} || true
           echo "Deployment complete"
+
+  cleanup-on-failure:
+    runs-on: ubuntu-latest
+    needs: deploy-infrastructure
+    if: failure()
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.7.0
+
+      - name: Destroy Grafana Infrastructure
+        working-directory: backend/infra/grafana-infra
+        run: |
+          terraform init -backend-config="key=grafana-infra/dev/terraform.tfstate"
+          terraform workspace select dev || true
+          terraform destroy -var-file="terraform.tfvars" \
+            -var="grafana_admin_password=${{ secrets.GRAFANA_ADMIN_PASSWORD }}" \
+            -auto-approve || echo "Grafana destroy failed or already destroyed"
+
+      - name: Destroy DynamoDB Infrastructure
+        working-directory: backend/infra/dynamodb-infra
+        run: |
+          terraform init -backend-config="key=dynamodb-infra/dev/terraform.tfstate"
+          terraform workspace select dev || true
+          terraform destroy -var-file="terraform.tfvars" -auto-approve || echo "DynamoDB destroy failed or already destroyed"
+
+      - name: Destroy S3 Infrastructure
+        working-directory: backend/infra/s3-bucket-infra
+        run: |
+          terraform init -backend-config="key=s3-bucket-infra/dev/terraform.tfstate"
+          terraform workspace select dev || true
+          terraform destroy -var-file="terraform.tfvars" -auto-approve || echo "S3 destroy failed or already destroyed"
+
+      - name: Delete ECR Images
+        run: |
+          aws ecr batch-delete-image \
+            --repository-name transinia-dev-backend \
+            --image-ids imageTag=latest imageTag=${{ github.sha }} || true
+          aws ecr batch-delete-image \
+            --repository-name transinia-dev-frontend \
+            --image-ids imageTag=latest imageTag=${{ github.sha }} || true
+
+      - name: Delete CloudWatch Log Groups
+        run: |
+          aws logs delete-log-group --log-group-name "/ecs/transinia-dev-backend" || true
+          aws logs delete-log-group --log-group-name "/ecs/transinia-dev-frontend" || true
+          aws logs delete-log-group --log-group-name "/ecs/transinia-dev-grafana" || true
+
+      - name: Cleanup Summary
+        run: |
+          echo "Deployment failed - automatic cleanup completed"
+          echo "Destroyed resources:"
+          echo "Grafana infrastructure"
+          echo "DynamoDB tables"
+          echo "S3 buckets"
+          echo "ECR images"
+          echo "CloudWatch log groups"
+          echo ""
+          echo "Note: ECS infrastructure (VPC, ALB, Cluster) must be destroyed manually if needed."
