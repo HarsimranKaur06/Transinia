@@ -218,7 +218,7 @@ jobs:
           SERVICE_EXISTS=$(aws ecs describe-services --cluster $CLUSTER_NAME --services transinia-dev-grafana-service --query "services[0].status" --output text 2>/dev/null)
           
           if [ "$SERVICE_EXISTS" == "ACTIVE" ]; then
-            echo "✅ Grafana service already running - importing existing resources into Terraform state"
+            echo "Grafana service already running - importing existing resources into Terraform state"
             
             # Import ECS service
             terraform import 'aws_ecs_service.grafana' transinia-dev-cluster/transinia-dev-grafana-service 2>/dev/null || echo "Service already in state or doesn't exist"
@@ -284,10 +284,10 @@ jobs:
             terraform import 'aws_iam_role_policy_attachment.grafana_execution' transinia-dev-grafana-execution-role/arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy 2>/dev/null || echo "Execution policy already in state"
             
             echo "exists=true" >> $GITHUB_OUTPUT
-            echo "✅ Existing resources imported - skipping deployment"
+            echo "Existing resources imported - skipping deployment"
           else
             echo "exists=false" >> $GITHUB_OUTPUT
-            echo "✅ No Grafana infrastructure found - will deploy"
+            echo "No Grafana infrastructure found - will deploy"
           fi
 
       - name: Deploy Grafana Infrastructure
@@ -371,12 +371,12 @@ jobs:
 
       - name: Cleanup Summary
         run: |
-          echo "⚠️ Deployment failed - automatic cleanup completed"
+          echo "Deployment failed - automatic cleanup completed"
           echo "Destroyed resources:"
-          echo "  ✓ Grafana infrastructure"
-          echo "  ✓ DynamoDB tables"
-          echo "  ✓ S3 buckets"
-          echo "  ✓ ECR images"
-          echo "  ✓ CloudWatch log groups"
+          echo "Grafana infrastructure"
+          echo "DynamoDB tables"
+          echo "S3 buckets"
+          echo "ECR images"
+          echo "CloudWatch log groups"
           echo ""
           echo "Note: ECS infrastructure (VPC, ALB, Cluster) must be destroyed manually if needed."
