@@ -139,8 +139,6 @@ jobs:
         run: |
           aws logs create-log-group --log-group-name "/ecs/transinia-dev-backend" --region ${{ env.AWS_REGION }} || true
           aws logs create-log-group --log-group-name "/ecs/transinia-dev-frontend" --region ${{ env.AWS_REGION }} || true
-          aws logs create-log-group --log-group-name "/ecs/transinia-dev-grafana" --region ${{ env.AWS_REGION }} || true
-          aws logs create-log-group --log-group-name "/ecs/transinia-dev-prometheus" --region ${{ env.AWS_REGION }} || true
 
       - name: Prepare backend task definition
         run: |
@@ -275,8 +273,6 @@ jobs:
         run: |
           aws logs create-log-group --log-group-name "/ecs/transinia-dev-backend" --region ${{ env.AWS_REGION }} || true
           aws logs create-log-group --log-group-name "/ecs/transinia-dev-frontend" --region ${{ env.AWS_REGION }} || true
-          aws logs create-log-group --log-group-name "/ecs/transinia-dev-grafana" --region ${{ env.AWS_REGION }} || true
-          aws logs create-log-group --log-group-name "/ecs/transinia-dev-prometheus" --region ${{ env.AWS_REGION }} || true
           echo "Deployment complete"
 
   cleanup-on-failure:
