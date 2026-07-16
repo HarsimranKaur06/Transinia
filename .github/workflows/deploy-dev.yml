@@ -135,11 +135,6 @@ jobs:
           push: true
           tags: ${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:latest,${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:${{ github.sha }}
 
-      - name: Create CloudWatch Log Groups
-        run: |
-          aws logs create-log-group --log-group-name "/ecs/transinia-dev-backend" --region ${{ env.AWS_REGION }} || true
-          aws logs create-log-group --log-group-name "/ecs/transinia-dev-frontend" --region ${{ env.AWS_REGION }} || true
-
       - name: Prepare backend task definition
         run: |
           sed -i 's#\${AWS_REGION}#${{ env.AWS_REGION }}#g' .github/ecs/taskdef-backend.json
@@ -268,13 +263,6 @@ jobs:
           terraform validate
           terraform apply -auto-approve
 
-      - name: Final cleanup (log groups + verify)
-        if: always()
-        run: |
-          aws logs create-log-group --log-group-name "/ecs/transinia-dev-backend" --region ${{ env.AWS_REGION }} || true
-          aws logs create-log-group --log-group-name "/ecs/transinia-dev-frontend" --region ${{ env.AWS_REGION }} || true
-          echo "Deployment complete"
-
   cleanup-on-failure:
     runs-on: ubuntu-latest
     needs: deploy-infrastructure
@@ -308,6 +296,15 @@ jobs:
             -var="grafana_admin_password=${{ secrets.GRAFANA_ADMIN_PASSWORD }}" \
             -auto-approve || echo "Grafana destroy failed or already destroyed"
 
+      - name: Destroy Prometheus Infrastructure
+        working-directory: backend/infra/prometheus-infra
+        env:
+          TF_VAR_aws_region: ${{ env.AWS_REGION }}
+        run: |
+          terraform init -backend-config="key=prometheus-infra/dev/terraform.tfstate"
+          terraform workspace select dev || true
+          terraform destroy -auto-approve || echo "Prometheus destroy failed or already destroyed"
+
       - name: Destroy DynamoDB Infrastructure
         working-directory: backend/infra/dynamodb-infra
         run: |
@@ -331,20 +328,14 @@ jobs:
             --repository-name transinia-dev-frontend \
             --image-ids imageTag=latest imageTag=${{ github.sha }} || true
 
-      - name: Delete CloudWatch Log Groups
-        run: |
-          aws logs delete-log-group --log-group-name "/ecs/transinia-dev-backend" || true
-          aws logs delete-log-group --log-group-name "/ecs/transinia-dev-frontend" || true
-          aws logs delete-log-group --log-group-name "/ecs/transinia-dev-grafana" || true
-
       - name: Cleanup Summary
         run: |
           echo "Deployment failed - automatic cleanup completed"
           echo "Destroyed resources:"
           echo "Grafana infrastructure"
+          echo "Prometheus infrastructure"
           echo "DynamoDB tables"
           echo "S3 buckets"
           echo "ECR images"
-          echo "CloudWatch log groups"
           echo ""
-          echo "Note: ECS infrastructure (VPC, ALB, Cluster) must be destroyed manually if needed."
+          echo "Note: Terraform state bucket and ECS infrastructure (VPC, ALB, Cluster) must be destroyed manually if needed."
