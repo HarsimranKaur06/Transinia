@@ -126,6 +126,25 @@ jobs:
         with:
           mask-password: 'true'
 
+
+      - name: Ensure CloudWatch Log Groups Exist
+        run: |
+          aws logs describe-log-groups \
+            --log-group-name-prefix "/ecs/transinia-dev-backend" \
+            --query "logGroups[?logGroupName=='/ecs/transinia-dev-backend'].logGroupName" \
+            --output text | grep -qx "/ecs/transinia-dev-backend" || \
+          aws logs create-log-group \
+            --log-group-name "/ecs/transinia-dev-backend" \
+            --region "$AWS_REGION"
+
+          aws logs describe-log-groups \
+            --log-group-name-prefix "/ecs/transinia-dev-frontend" \
+            --query "logGroups[?logGroupName=='/ecs/transinia-dev-frontend'].logGroupName" \
+            --output text | grep -qx "/ecs/transinia-dev-frontend" || \
+          aws logs create-log-group \
+            --log-group-name "/ecs/transinia-dev-frontend" \
+            --region "$AWS_REGION"
+
       - name: Build and push backend image
         id: build-backend
         uses: docker/build-push-action@v4
