@@ -129,21 +129,28 @@ jobs:
 
       - name: Ensure CloudWatch Log Groups Exist
         run: |
-          aws logs describe-log-groups \
-            --log-group-name-prefix "/ecs/transinia-dev-backend" \
-            --query "logGroups[?logGroupName=='/ecs/transinia-dev-backend'].logGroupName" \
-            --output text | grep -qx "/ecs/transinia-dev-backend" || \
-          aws logs create-log-group \
-            --log-group-name "/ecs/transinia-dev-backend" \
-            --region "$AWS_REGION"
+          for LOG_GROUP in \
+            "/ecs/transinia-dev-backend" \
+            "/ecs/transinia-dev-frontend" \
+            "/ecs/transinia-dev-grafana" \
+            "/ecs/transinia-dev-prometheus"
+          do
+            EXISTING_GROUP=$(aws logs describe-log-groups \
+              --log-group-name-prefix "$LOG_GROUP" \
+              --query "logGroups[?logGroupName=='$LOG_GROUP'].logGroupName" \
+              --output text \
+              --region "$AWS_REGION")
 
-          aws logs describe-log-groups \
-            --log-group-name-prefix "/ecs/transinia-dev-frontend" \
-            --query "logGroups[?logGroupName=='/ecs/transinia-dev-frontend'].logGroupName" \
-            --output text | grep -qx "/ecs/transinia-dev-frontend" || \
-          aws logs create-log-group \
-            --log-group-name "/ecs/transinia-dev-frontend" \
-            --region "$AWS_REGION"
+            if [ "$EXISTING_GROUP" = "$LOG_GROUP" ]; then
+              echo "Log group already exists: $LOG_GROUP"
+            else
+              aws logs create-log-group \
+                --log-group-name "$LOG_GROUP" \
+                --region "$AWS_REGION"
+
+              echo "Created log group: $LOG_GROUP"
+            fi
+          done
 
       - name: Build and push backend image
         id: build-backend
