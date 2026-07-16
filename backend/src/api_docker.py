@@ -13,6 +13,7 @@ from typing import List, Optional
 from datetime import datetime
 from fastapi import FastAPI, UploadFile, File, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
+from prometheus_fastapi_instrumentator import Instrumentator
 from pydantic import BaseModel
 
 # Try both import styles to support both local and Docker environments
@@ -35,6 +36,11 @@ except ImportError:
 app = FastAPI(title="Transinia API", 
               description="API for processing meeting transcripts and generating insights",
               version="1.0.0")
+
+# Added for exposing prometheus metrics
+Instrumentator().instrument(app).expose(
+    app,
+    endpoint="/api/metrics"
 
 # Add CORS middleware
 app.add_middleware(

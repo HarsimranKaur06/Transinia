@@ -20,6 +20,7 @@ from sentry_sdk.integrations.fastapi import FastApiIntegration
 from backend.src.agents.graph import create_graph
 from backend.src.config.settings import settings, logger
 from backend.src.models.schemas import MeetingState
+from prometheus_fastapi_instrumentator import Instrumentator
 from backend.src.repositories.storage_repo import StorageRepository
 
 # Scrub sensitive data before sending to Sentry
@@ -75,6 +76,12 @@ else:
 app = FastAPI(title="Transinia API", 
               description="API for processing meeting transcripts and generating insights",
               version="1.0.0")
+
+# Added for exposing prometheus metrics
+Instrumentator().instrument(app).expose(
+    app,
+    endpoint="/api/metrics"
+)
 
 # Add CORS middleware
 app.add_middleware(

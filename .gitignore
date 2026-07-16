@@ -88,7 +88,23 @@ tf.plan
 !test.tfvars
 **/*.exe
 **/terraform-provider-*
-.terraform.lock.hcl
+
+
+# Ignore real Terraform variable files
+*.tfvars
+*.tfvars.json
+
+# Allow safe example variable files
+!*.tfvars.example
+
+# Ignore Terraform working directories and binaries
+**/*.exe
+**/terraform-provider-*
+
+# Commit Terraform dependency lock files
+!.terraform.lock.hcl
+
+
 
 # Temporary config files
 cors-config.json
